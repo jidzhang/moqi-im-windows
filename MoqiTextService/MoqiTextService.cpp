@@ -126,6 +126,91 @@ void appendCandidateWindowLog(const std::wstring& message) {
 	stream << formatDebugLogLine(message) << L"\n";
 }
 
+// TSF textExt 不可用（部分 host 不实现 ITfContextView::GetTextExt）时的兜底：
+// 取焦点窗口的插入符屏幕坐标；连插入符都没有时退回窗口矩形。
+bool fallbackCaretRectFromFocus(RECT* rect) {
+	HWND focus = ::GetFocus();
+	if (!focus) {
+		return false;
+	}
+	POINT caret{};
+	if (::GetCaretPos(&caret) && (caret.x != 0 || caret.y != 0) && ::ClientToScreen(focus, &caret)) {
+		rect->left = caret.x;
+		rect->right = caret.x;
+		rect->top = caret.y - 16;
+		rect->bottom = caret.y;
+		return true;
+	}
+	RECT windowRect{};
+	if (::GetWindowRect(focus, &windowRect)) {
+		*rect = windowRect;
+		return true;
+	}
+	return false;
+}
+
+// 把候选窗锚点（输入行左下角）夹取到工作区内。锚点不被任何显示器包含时
+// （应用上报空矩形或离屏坐标，多显示器上会把候选窗送到隔壁屏或钉死在
+// 虚拟屏角落），以焦点窗口所在显示器的工作区为基准重排；底部放不下时
+// 优先翻到输入行上方，竖排/多行候选窗按整窗尺寸处理。
+void clampCandidateWindowAnchor(HWND candidateHwnd, const RECT& textRect, POINT* pos) {
+	if (::MonitorFromPoint(*pos, MONITOR_DEFAULTTONULL) != nullptr) {
+		// 锚点落在某个显示器内，交给 ImeWindow::move 按该屏工作区夹取。
+		return;
+	}
+
+	HWND focus = ::GetFocus();
+	HWND anchor = focus ? focus : ::GetForegroundWindow();
+	HMONITOR monitor = anchor
+		? ::MonitorFromWindow(anchor, MONITOR_DEFAULTTONEAREST)
+		: ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTONEAREST);
+	MONITORINFO info{};
+	info.cbSize = sizeof(info);
+	if (!::GetMonitorInfo(monitor, &info)) {
+		return;
+	}
+	const RECT work = info.rcWork;
+
+	int width = 0;
+	int height = 0;
+	RECT windowRect{};
+	if (candidateHwnd && ::GetWindowRect(candidateHwnd, &windowRect)) {
+		width = windowRect.right - windowRect.left;
+		height = windowRect.bottom - windowRect.top;
+	}
+
+	const int margin = 8;
+	if (pos->x < work.left + margin) {
+		pos->x = work.left + margin;
+	}
+	if (width > 0 && pos->x + width > work.right - margin) {
+		pos->x = work.right - margin - width;
+		if (pos->x < work.left + margin) {
+			pos->x = work.left + margin;
+		}
+	}
+	if (pos->y < work.top + margin) {
+		pos->y = work.top + margin;
+	}
+	if (height > 0 && pos->y + height > work.bottom - margin) {
+		const int above = textRect.top - margin - height;
+		if (above >= work.top + margin) {
+			pos->y = above;
+		} else {
+			pos->y = work.bottom - margin - height;
+			if (pos->y < work.top + margin) {
+				pos->y = work.top + margin;
+			}
+		}
+	}
+
+	std::wostringstream log;
+	log << L"[clampCandidateWindowAnchor] clamped pos=(" << pos->x << L"," << pos->y << L")"
+		<< L" text_rect=(" << textRect.left << L"," << textRect.top << L"," << textRect.right << L"," << textRect.bottom << L")"
+		<< L" size=" << width << L"x" << height;
+	appendCandidateWindowLog(log.str());
+}
+
 void appendTsfDebugLog(const std::wstring& message) {
 	if (!Ime::isTraceLoggingEnabled()) {
 		return;
@@ -882,6 +967,7 @@ void TextService::updateCandidates(Ime::EditSession* session) {
 	const std::wstring renderedPreedit = effectiveInlinePreedit() ? L"" : candidatePreedit_;
 	const bool contentChanged = !isCandidateContentApplied(renderedPreedit);
 	if (contentChanged) {
+		candidateWindow_->beginUpdate();
 		candidateWindow_->clear();
 		candidateWindow_->setUseCursor(candUseCursor_);
 		candidateWindow_->setCandPerRow(candPerRow_);
@@ -901,8 +987,7 @@ void TextService::updateCandidates(Ime::EditSession* session) {
 		for (int i = 0; i < candidates_.size(); ++i) {
 			candidateWindow_->add(candidates_[i], selKeys_[i]);
 		}
-		candidateWindow_->recalculateSize();
-		candidateWindow_->refresh();
+		candidateWindow_->endUpdate();
 		markCandidateContentApplied(renderedPreedit);
 		hasAppliedCandidateCursor_ = false;
 	}
@@ -998,14 +1083,18 @@ bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, cons
 	RECT textRect;
 	// get the position of composition area from TSF
 	if (!inputRect(session, &textRect)) {
-		std::wstring tag = L"[TextService::";
-		tag += reason;
-		tag += L"] inputRect unavailable";
-		appendCandidateWindowLog(tag);
-		return false;
+		if (!fallbackCaretRectFromFocus(&textRect)) {
+			std::wstring tag = L"[TextService::";
+			tag += reason;
+			tag += L"] inputRect unavailable";
+			appendCandidateWindowLog(tag);
+			return false;
+		}
+		appendCandidateWindowLog(std::wstring(L"[TextService::") + reason +
+			L"] inputRect unavailable; using focus caret fallback");
 	}
 
-	const POINT nextPos{textRect.left, textRect.bottom};
+	POINT nextPos{textRect.left, textRect.bottom};
 	const ULONGLONG now = ::GetTickCount64();
 	if (throttleSamePosition && hasLastCandidateWindowPos_ &&
 		lastCandidateWindowPos_.x == nextPos.x &&
@@ -1014,7 +1103,7 @@ bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, cons
 		return false;
 	}
 
-	// FIXME: where should we put the candidate window?
+	clampCandidateWindowAnchor(candidateWindow_->hwnd(), textRect, &nextPos);
 	candidateWindow_->move(nextPos.x, nextPos.y);
 	hasLastCandidateWindowPos_ = true;
 	lastCandidateWindowPos_ = nextPos;

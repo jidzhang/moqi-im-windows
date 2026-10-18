@@ -74,6 +74,12 @@ public:
     void syncOwner(Ime::EditSession* session);
     void recalculateSize() override;
 
+    // 批量更新：期间 setter 不做中间重排/重绘，endUpdate 统一做一次。
+    // 打字时每个按键会连调十余个 setter，逐个 InvalidateRect 会让窗口
+    // 在一帧内被多次强制重画，产生可见闪烁（微软拼音无此问题）。
+    void beginUpdate();
+    void endUpdate();
+
 protected:
     ~CandidateWindow(void) override;
 
@@ -97,6 +103,7 @@ private:
 
 private:
     BOOL shown_;
+    bool bulkUpdating_ = false;
     int selKeyWidth_;
     int textWidth_;
     int commentWidth_;

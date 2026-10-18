@@ -157,6 +157,13 @@ void enforceCandidateWindowTopmost(HWND hwnd, bool showWindow, const wchar_t* re
         return;
     }
 
+    // 已置顶且可见时跳过：该函数在每个按键的 syncOwner/Show 路径都会被调，
+    // 反复 SetWindowPos 会让 DWM 在帧中间合成，肉眼可见闪烁。
+    const DWORD exStyle = static_cast<DWORD>(::GetWindowLong(hwnd, GWL_EXSTYLE));
+    if (showWindow && (exStyle & WS_EX_TOPMOST) && ::IsWindowVisible(hwnd)) {
+        return;
+    }
+
     UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
     if (showWindow) {
         flags |= SWP_SHOWWINDOW;
@@ -402,11 +409,26 @@ void CandidateWindow::clear() {
     }
 }
 
+void CandidateWindow::beginUpdate() {
+    bulkUpdating_ = true;
+}
+
+void CandidateWindow::endUpdate() {
+    if (!bulkUpdating_) {
+        return;
+    }
+    bulkUpdating_ = false;
+    recalculateSize();
+    refresh();
+}
+
 void CandidateWindow::setCandPerRow(int n) {
     n = (std::max)(1, n);
     if (candPerRow_ != n) {
         candPerRow_ = n;
-        recalculateSize();
+        if (!bulkUpdating_) {
+            recalculateSize();
+        }
     }
 }
 
@@ -414,9 +436,11 @@ void CandidateWindow::setCandSpacing(int spacing) {
     spacing = (std::max)(0, spacing);
     if (candSpacing_ != spacing) {
         candSpacing_ = spacing;
-        recalculateSize();
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_) {
+            recalculateSize();
+            if (isVisible()) {
+                ::InvalidateRect(hwnd_, NULL, FALSE);
+            }
         }
     }
 }
@@ -431,16 +455,16 @@ void CandidateWindow::setCurrentSel(int sel) {
     }
     if (currentSel_ != sel) {
         currentSel_ = sel;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
 
 void CandidateWindow::setUseCursor(bool use) {
     useCursor_ = use;
-    if (isVisible()) {
-        ::InvalidateRect(hwnd_, NULL, TRUE);
+    if (!bulkUpdating_ && isVisible()) {
+        ::InvalidateRect(hwnd_, NULL, FALSE);
     }
 }
 
@@ -450,9 +474,11 @@ void CandidateWindow::setPreeditText(std::wstring text) {
         if (preeditCursor_ > static_cast<int>(preedit_.length())) {
             preeditCursor_ = static_cast<int>(preedit_.length());
         }
-        recalculateSize();
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_) {
+            recalculateSize();
+            if (isVisible()) {
+                ::InvalidateRect(hwnd_, NULL, FALSE);
+            }
         }
     }
 }
@@ -461,8 +487,8 @@ void CandidateWindow::setPreeditCursor(int cursor) {
     cursor = (std::max)(0, (std::min)(cursor, static_cast<int>(preedit_.length())));
     if (preeditCursor_ != cursor) {
         preeditCursor_ = cursor;
-        if (isVisible() && !preedit_.empty()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible() && !preedit_.empty()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -470,9 +496,11 @@ void CandidateWindow::setPreeditCursor(int cursor) {
 void CandidateWindow::setCommentFont(HFONT font) {
     if (commentFont_ != font) {
         commentFont_ = font;
-        recalculateSize();
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_) {
+            recalculateSize();
+            if (isVisible()) {
+                ::InvalidateRect(hwnd_, NULL, FALSE);
+            }
         }
     }
 }
@@ -480,8 +508,8 @@ void CandidateWindow::setCommentFont(HFONT font) {
 void CandidateWindow::setBackgroundColor(COLORREF color) {
     if (backgroundColor_ != color) {
         backgroundColor_ = color;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -489,8 +517,8 @@ void CandidateWindow::setBackgroundColor(COLORREF color) {
 void CandidateWindow::setHighlightColor(COLORREF color) {
     if (highlightColor_ != color) {
         highlightColor_ = color;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -498,8 +526,8 @@ void CandidateWindow::setHighlightColor(COLORREF color) {
 void CandidateWindow::setTextColor(COLORREF color) {
     if (textColor_ != color) {
         textColor_ = color;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -507,8 +535,8 @@ void CandidateWindow::setTextColor(COLORREF color) {
 void CandidateWindow::setHighlightTextColor(COLORREF color) {
     if (highlightTextColor_ != color) {
         highlightTextColor_ = color;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -516,8 +544,8 @@ void CandidateWindow::setHighlightTextColor(COLORREF color) {
 void CandidateWindow::setCommentColor(COLORREF color) {
     if (commentColor_ != color) {
         commentColor_ = color;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -525,8 +553,8 @@ void CandidateWindow::setCommentColor(COLORREF color) {
 void CandidateWindow::setCommentHighlightColor(COLORREF color) {
     if (commentHighlightColor_ != color) {
         commentHighlightColor_ = color;
-        if (isVisible()) {
-            ::InvalidateRect(hwnd_, NULL, TRUE);
+        if (!bulkUpdating_ && isVisible()) {
+            ::InvalidateRect(hwnd_, NULL, FALSE);
         }
     }
 }
@@ -1016,7 +1044,9 @@ void CandidateWindow::applyWindowShape() {
     HRGN region = ::CreateRoundRectRgn(
         rc.left, rc.top, rc.right + 1, rc.bottom + 1,
         borderRadius_ * 2, borderRadius_ * 2);
-    ::SetWindowRgn(hwnd_, region, TRUE);
+    // bRedraw=FALSE：改区域自身会失效整个窗口，TRUE 会强制同步重画一帧，
+    // 打字时每个按键重设圆角区域就会闪。后续统一 refresh。
+    ::SetWindowRgn(hwnd_, region, FALSE);
 }
 
 } // namespace Moqi
