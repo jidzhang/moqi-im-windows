@@ -126,44 +126,24 @@ void appendCandidateWindowLog(const std::wstring& message) {
 	stream << formatDebugLogLine(message) << L"\n";
 }
 
-// TSF textExt 不可用（部分 host 不实现 ITfContextView::GetTextExt）时的兜底：
-// 取焦点窗口的插入符屏幕坐标；连插入符都没有时退回窗口矩形。
-bool fallbackCaretRectFromFocus(RECT* rect) {
-	HWND focus = ::GetFocus();
-	if (!focus) {
-		return false;
-	}
-	POINT caret{};
-	if (::GetCaretPos(&caret) && (caret.x != 0 || caret.y != 0) && ::ClientToScreen(focus, &caret)) {
-		rect->left = caret.x;
-		rect->right = caret.x;
-		rect->top = caret.y - 16;
-		rect->bottom = caret.y;
-		return true;
-	}
-	RECT windowRect{};
-	if (::GetWindowRect(focus, &windowRect)) {
-		*rect = windowRect;
-		return true;
-	}
-	return false;
-}
-
 // 把候选窗锚点（输入行左下角）夹取到工作区内。锚点不被任何显示器包含时
 // （应用上报空矩形或离屏坐标，多显示器上会把候选窗送到隔壁屏或钉死在
 // 虚拟屏角落），以焦点窗口所在显示器的工作区为基准重排；底部放不下时
 // 优先翻到输入行上方，竖排/多行候选窗按整窗尺寸处理。
 void clampCandidateWindowAnchor(HWND candidateHwnd, const RECT& textRect, POINT* pos) {
-	if (::MonitorFromPoint(*pos, MONITOR_DEFAULTTONULL) != nullptr) {
-		// 锚点落在某个显示器内，交给 ImeWindow::move 按该屏工作区夹取。
-		return;
+	// 微软拼音行为：候选框与输入行始终同屏。以输入行（textRect）所在
+	// 显示器为基准夹取整窗；不再按锚点选屏——打字到屏 1 右缘时锚点会
+	// 漂过屏缘，MonitorFromPoint 会选中隔壁屏 2，整窗被钉在屏 2 左缘。
+	HMONITOR monitor = ::MonitorFromRect(&textRect, MONITOR_DEFAULTTONEAREST);
+	if (monitor == nullptr ||
+	    ::MonitorFromWindow(::GetFocus(), MONITOR_DEFAULTTONEAREST) == nullptr) {
+		// 输入行选不出可用显示器时的兜底：焦点窗口所在屏
+		HWND focus = ::GetFocus();
+		HWND anchor = focus ? focus : ::GetForegroundWindow();
+		monitor = anchor
+			? ::MonitorFromWindow(anchor, MONITOR_DEFAULTTONEAREST)
+			: ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTONEAREST);
 	}
-
-	HWND focus = ::GetFocus();
-	HWND anchor = focus ? focus : ::GetForegroundWindow();
-	HMONITOR monitor = anchor
-		? ::MonitorFromWindow(anchor, MONITOR_DEFAULTTONEAREST)
-		: ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTONEAREST);
 	MONITORINFO info{};
 	info.cbSize = sizeof(info);
 	if (!::GetMonitorInfo(monitor, &info)) {
@@ -1081,17 +1061,16 @@ bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, cons
 	}
 
 	RECT textRect;
-	// get the position of composition area from TSF
+	// get the position of composition area from TSF. inputRect 内部已有
+	// 三级取数（真插入符 / TSF 矩形 / 同组字 last-good）；取不到可信矩形
+	// 时这一帧不动——任何猜测坐标（焦点窗矩形、废 caret 换算）都会把候选
+	// 窗送到左上角之类错误位置，不动永远比乱动正确。
 	if (!inputRect(session, &textRect)) {
-		if (!fallbackCaretRectFromFocus(&textRect)) {
-			std::wstring tag = L"[TextService::";
-			tag += reason;
-			tag += L"] inputRect unavailable";
-			appendCandidateWindowLog(tag);
-			return false;
-		}
-		appendCandidateWindowLog(std::wstring(L"[TextService::") + reason +
-			L"] inputRect unavailable; using focus caret fallback");
+		std::wstring tag = L"[TextService::";
+		tag += reason;
+		tag += L"] inputRect unavailable; keeping last position";
+		appendCandidateWindowLog(tag);
+		return false;
 	}
 
 	POINT nextPos{textRect.left, textRect.bottom};
