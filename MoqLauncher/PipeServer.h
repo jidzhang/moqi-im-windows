@@ -102,6 +102,8 @@ private:
 	// backend server
 	void initBackendServers(const std::wstring& topDirPath);
 	void initInputMethods(const std::wstring& topDirPath);
+	void scheduleBackendPrewarm();
+	void prewarmBackends();
 	void asyncRestartAllBackends();
     void restartAllBackends();
     void asyncTerminateAllBackends();
@@ -111,7 +113,7 @@ private:
 	void initDataDir();
 	void initLogger();
 	void loadConfig();
-	void saveConfig();
+	void saveConfig(bool traceEnabled);
     bool initSingleInstance();
 	static std::wstring getPipeName(const wchar_t* baseName);
 	void initPipe(uv_pipe_t* pipe, const wchar_t* appName, SECURITY_ATTRIBUTES* sa = nullptr);
@@ -137,6 +139,10 @@ private:
 
 	std::vector<std::unique_ptr<BackendServer>> backends_;
 	std::unordered_map<std::string, BackendServer*> backendMap_;
+
+	// 登录/装机后一次性后台预热定时器（触发即关闭，见 scheduleBackendPrewarm）。
+	uv_timer_t prewarmTimer_;
+	bool prewarmTimerArmed_ = false;
 
 	HWND hwnd_; // handle of the window
 	static wchar_t wndClassName_[];

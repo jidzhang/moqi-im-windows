@@ -107,9 +107,25 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, R);
 end;
 
+procedure TryKillBackendServers;
+var
+  R: Integer;
+begin
+  // 后端 server.exe 在启动器已退出时是孤儿进程，不在其进程树里；
+  // 留着它会继续用旧代码/旧数据服务客户端，且锁住 exe 使覆盖安装写不进新文件。
+  // 按路径过滤只杀本安装目录下的 server.exe，避免误杀其他软件的同名进程。
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -Command "' +
+    'Get-Process server -ErrorAction SilentlyContinue |' +
+    ' Where-Object { $_.Path -like ''' + ExpandConstant('{app}') + '\*'' } |' +
+    ' Stop-Process -Force"',
+    '', SW_HIDE, ewWaitUntilTerminated, R);
+end;
+
 procedure StopMoqiProcesses;
 begin
   TryKillProcessImage('MoqiLauncher.exe');
+  TryKillBackendServers;
 end;
 
 function GetSetupHelperPath: string;

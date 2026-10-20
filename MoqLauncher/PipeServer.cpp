@@ -139,16 +139,23 @@ void PipeServer::loadConfig() {
   auto configFile = dataDirPath_ + CONFIG_FILE_REL_PATH;
   Json::Value config;
   if (loadJsonFile(configFile, config)) {
-    auto loadedLevel = spdlog::level::from_str(config["logLevel"].asString());
-    logLevel_ = loadedLevel <= spdlog::level::debug ? spdlog::level::debug
-                                                    : spdlog::level::err;
+    // 容错：配置里可能只有前端侧的 "loglevel" 键（历史排障手册写法）或键缺失，
+    // 此时 config["logLevel"] 是 null，asString() 会抛异常把启动器带崩。
+    const auto& levelValue = config["logLevel"];
+    if (levelValue.isString()) {
+      auto loadedLevel = spdlog::level::from_str(levelValue.asString());
+      logLevel_ = loadedLevel <= spdlog::level::debug ? spdlog::level::debug
+                                                      : spdlog::level::err;
+    }
   }
 }
 
-void PipeServer::saveConfig() {
+void PipeServer::saveConfig(bool traceEnabled) {
   auto configFile = dataDirPath_ + CONFIG_FILE_REL_PATH;
   Json::Value config;
-  config["logLevel"] = spdlog::level::to_c_str(logLevel_);
+  // 写 "trace" 而不是内部日志档：前端（TSF DLL）读同一个文件、且只有
+  // "trace" 才输出埋点日志；启动器自己的 spdlog 档位已在内存里夹到 debug。
+  config["logLevel"] = traceEnabled ? "trace" : "error";
   if (!saveJsonFile(configFile, config)) {
     logger_->error("fail to write config file");
   }
@@ -221,6 +228,57 @@ void PipeServer::restartAllBackends() {
   }
 }
 
+// 登录/装机后一次性后台预热（首切卡顿的最后一刀）。
+// 背景：后端是懒启动（首个客户端消息才起进程），而 warmup 又要求
+// lastInitGuid_ 非空（只在真实 INIT 到达后才赋值）。两者叠加导致装机/
+// 登录后的第一次切换必然 inline 付出 5~14s 的 Rime 全量部署，UI 冻结。
+// 修法：启动器就绪几秒后，用 ime.json 里已知的语言配置 GUID 预填
+// lastInitGuid_ 再起进程，startProcess 尾部的 sendWarmupRequests 会把
+// init+activate+一次按键全套在后台跑完，首切只剩毫秒级。
+static constexpr uint64_t kBackendPrewarmDelayMs = 3000;
+
+void PipeServer::scheduleBackendPrewarm() {
+  prewarmTimer_.data = this;
+  uv_timer_init(uv_default_loop(), &prewarmTimer_);
+  uv_timer_start(&prewarmTimer_,
+                 [](uv_timer_t *timer) {
+                   auto self = reinterpret_cast<PipeServer *>(timer->data);
+                   uv_timer_stop(timer);
+                   uv_close(reinterpret_cast<uv_handle_t *>(timer), nullptr);
+                   self->prewarmTimerArmed_ = false;
+                   self->prewarmBackends();
+                 },
+                 kBackendPrewarmDelayMs, 0);
+  prewarmTimerArmed_ = true;
+}
+
+void PipeServer::prewarmBackends() {
+  if (shutdownRequested_) {
+    return;
+  }
+  for (auto &backend : backends_) {
+    if (backend->isProcessRunning()) {
+      continue; // 已有真实客户端先行拉起，不重复起进程
+    }
+    // 找第一个映射到该后端的语言配置 GUID（initInputMethods 已建表）。
+    std::string guid;
+    for (const auto &kv : backendMap_) {
+      if (kv.second == backend.get()) {
+        guid = kv.first;
+        break;
+      }
+    }
+    if (guid.empty()) {
+      continue;
+    }
+    logger_->info("Prewarming backend {} (guid={})", backend->name_, guid);
+    // PipeServer 是 BackendServer 的 friend，直接预填后起进程；
+    // startProcess 尾部会自动发出全套 warmup 请求。
+    backend->lastInitGuid_ = guid;
+    backend->startProcess();
+  }
+}
+
 void PipeServer::asyncRestartAllBackends() {
   // The backend objects runs in another thread owned by uv loop.
   // So it's only safe to touch them in uv async callbacks.
@@ -269,6 +327,14 @@ void PipeServer::asyncTerminateAllBackends() {
 
 void PipeServer::shutdown() {
   logger_->info("Shutting down launcher");
+
+  if (prewarmTimerArmed_) {
+    uv_timer_stop(&prewarmTimer_);
+    if (!uv_is_closing(reinterpret_cast<uv_handle_t *>(&prewarmTimer_))) {
+      uv_close(reinterpret_cast<uv_handle_t *>(&prewarmTimer_), nullptr);
+    }
+    prewarmTimerArmed_ = false;
+  }
 
   auto clients = clients_;
   for (auto client : clients) {
@@ -488,6 +554,9 @@ int PipeServer::exec(LPSTR cmd) {
       [](void *arg) { reinterpret_cast<PipeServer *>(arg)->runGuiThread(); },
       this);
 
+  // 登录/装机后几秒在后台把后端拉起并跑完 Rime 部署，首切不再 inline 等待。
+  scheduleBackendPrewarm();
+
   // run the main loop
   uv_run(uv_default_loop(), UV_RUN_DEFAULT);
 
@@ -544,13 +613,17 @@ LRESULT PipeServer::wndProc(UINT msg, WPARAM wp, LPARAM lp) {
     case ID_EXIT_Moqi:
       asyncTerminateAllBackends();
       return 0;
-    case ID_ENABLE_DEBUG_LOG:
-      // toggle between log_level: error <--> debug
-      logLevel_ = (logLevel_ <= spdlog::level::debug) ? spdlog::level::err
-                                                      : spdlog::level::debug;
+    case ID_ENABLE_DEBUG_LOG: {
+      // 开关语义：开 = 启动器/后端 spdlog 走 debug，同时配置写 "trace" 让
+      // 前端 TSF 埋点（tsf-debug.log / candidate-window.log，只有 trace 档
+      // 才输出）真正打开；关 = 两者都关。此前只切 error<->debug，菜单永远
+      // 打不开前端埋点，实机排障拿不到候选框日志。
+      const bool enabling = logLevel_ > spdlog::level::debug;
+      logLevel_ = enabling ? spdlog::level::debug : spdlog::level::err;
       logger_->set_level(logLevel_);
-      saveConfig();
+      saveConfig(enabling);
       break;
+    }
     case ID_SHOW_DEBUG_LOGS:
       // show logs dir
       ::ShellExecuteW(hwnd_, L"open", (dataDirPath_ + L"\\Log").c_str(),
