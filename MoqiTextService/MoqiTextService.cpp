@@ -391,6 +391,7 @@ TextService::TextService(ImeModule* module):
 	client_(nullptr),
 	messageWindow_(nullptr),
 	messageTimerId_(0),
+	candidateFocusWatchdogTimerId_(0),
 	validCandidateListElementId_(false),
 	candidateListElementId_(0),
 	shouldShowCandidateWindowUI_(true),
@@ -535,6 +536,12 @@ void TextService::onKillThreadFocus() {
 		<< L" pending_candidate_recovery=" << boolText(pendingCandidateRecovery_)
 		<< L" " << foregroundWindowSummary();
 	logDebug(log.str());
+	// 切走应用（焦点线程变了，含切到其他程序）：候选窗是无激活弹出窗，
+	// 不隐藏就会浮在其他应用之上（用户 2026-10-20 实报"候选窗浮到最前面"）。
+	// 组字状态不动，回到本应用继续打字时后端状态会重新显示候选。
+	if (showingCandidates_ || pendingCandidateRecovery_) {
+		hideCandidates();
+	}
 }
 
 // virtual
@@ -910,6 +917,7 @@ void TextService::createCandidateWindow(Ime::EditSession* session) {
 }
 
 void TextService::destroyCandidateWindow() {
+	stopCandidateFocusWatchdog();
 	if (validCandidateListElementId_) {
 		auto elementMgr = Ime::ComPtr<ITfUIElementMgr>::queryFrom(threadMgr());
 		if (elementMgr) {
@@ -976,6 +984,7 @@ void TextService::updateCandidates(Ime::EditSession* session) {
 
 	if (showingCandidates_) {
 		candidateWindow_->Show(shouldShowCandidateWindowUI_ ? TRUE : FALSE);
+		startCandidateFocusWatchdog();
 		std::wostringstream log;
 		log << L"[TextService::updateCandidates] ensured visibility should_show_ui="
 			<< boolText(shouldShowCandidateWindowUI_);
@@ -1118,11 +1127,13 @@ void TextService::showCandidates(Ime::EditSession* session) {
 	}
 	showingCandidates_ = true;
 	pendingCandidateRecovery_ = false;
+	startCandidateFocusWatchdog();
 	appendCandidateWindowLog(L"[TextService::showCandidates] shown");
 }
 
 // hide candidate list window
 void TextService::hideCandidates(bool preserveRecoveryState) {
+	stopCandidateFocusWatchdog();
 	if (!tsfCandidateUiEnabled()) {
 		showingCandidates_ = false;
 		pendingCandidateRecovery_ = preserveRecoveryState;
@@ -1141,6 +1152,70 @@ void TextService::hideCandidates(bool preserveRecoveryState) {
 	log << L"[TextService::hideCandidates] hidden preserve_recovery="
 		<< boolText(preserveRecoveryState);
 	appendCandidateWindowLog(log.str());
+}
+
+// 候选窗“前台看门狗”：TSF 的 onKillThreadFocus 要等 TSF 管理器派发，实测比真实的
+// 前台切换晚 90~115ms（2026-10-20 采样 5 次：前台切换→回调 94~113ms，回调→隐藏 2ms）。
+// 宿主自己的窗口通常立刻变灰，候选窗多停留的这 ~100ms 就显得“隐藏慢半拍”。
+// 所以候选窗显示期间每 30ms 看一眼前台窗口：只要前台属于别的线程就立刻隐藏，
+// 不再等 TSF 通知；onKillThreadFocus 仍然保留，作为兜底。
+static const UINT_PTR kCandidateFocusWatchdogTimerId = 2;
+static const UINT kCandidateFocusWatchdogIntervalMs = 30;
+
+void TextService::startCandidateFocusWatchdog() {
+	if (!candidateWindow_ || candidateFocusWatchdogTimerId_) {
+		return;
+	}
+	candidateFocusWatchdogTimerId_ = ::SetTimer(
+		candidateWindow_->hwnd(),
+		kCandidateFocusWatchdogTimerId,
+		kCandidateFocusWatchdogIntervalMs,
+		(TIMERPROC)TextService::onCandidateFocusWatchdog);
+}
+
+void TextService::stopCandidateFocusWatchdog() {
+	if (candidateFocusWatchdogTimerId_ && candidateWindow_) {
+		::KillTimer(candidateWindow_->hwnd(), candidateFocusWatchdogTimerId_);
+	}
+	candidateFocusWatchdogTimerId_ = 0;
+}
+
+void TextService::checkCandidateFocus() {
+	if (!showingCandidates_ || !candidateWindow_) {
+		return;
+	}
+	const HWND foreground = ::GetForegroundWindow();
+	if (!foreground) {
+		// 切换瞬间 GetForegroundWindow 会短暂返回 0（实测约 30ms），无法判定，下一拍再看
+		return;
+	}
+	if (foreground == candidateWindow_->hwnd()) {
+		return;
+	}
+	const DWORD foregroundThread = ::GetWindowThreadProcessId(foreground, nullptr);
+	if (foregroundThread == ::GetCurrentThreadId()) {
+		return;
+	}
+	std::wostringstream log;
+	log << L"[TextService::focusWatchdog] hide candidates early fg_hwnd=0x"
+		<< std::hex << reinterpret_cast<UINT_PTR>(foreground) << std::dec
+		<< L" fg_tid=" << foregroundThread;
+	appendCandidateWindowLog(log.str());
+	hideCandidates();
+}
+
+// static
+void CALLBACK TextService::onCandidateFocusWatchdog(HWND hwnd, UINT msg, UINT_PTR id, DWORD time) {
+	// 本定时器只挂在候选窗上（ImeWindow 派生，Window 基类在偏移 0），
+	// 与 onMessageTimeout 同一写法；项目关闭 RTTI（/GR-），不能用 dynamic_cast。
+	Ime::ImeWindow* imeWindow = static_cast<Ime::ImeWindow*>(Ime::Window::fromHwnd(hwnd));
+	if (!imeWindow) {
+		return;
+	}
+	TextService* self = static_cast<TextService*>(imeWindow->textService());
+	if (self) {
+		self->checkCandidateFocus();
+	}
 }
 
 // message window

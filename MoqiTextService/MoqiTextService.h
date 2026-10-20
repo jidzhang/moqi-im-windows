@@ -319,6 +319,12 @@ private:
 	void onMessageTimeout();
 	static void CALLBACK onMessageTimeout(HWND hwnd, UINT msg, UINT_PTR id, DWORD time);
 
+	// 前台看门狗：候选窗显示期间轮询前台窗口，不等 TSF 的焦点通知（实测晚 ~100ms）
+	void startCandidateFocusWatchdog();
+	void stopCandidateFocusWatchdog();
+	void checkCandidateFocus();
+	static void CALLBACK onCandidateFocusWatchdog(HWND hwnd, UINT msg, UINT_PTR id, DWORD time);
+
 	void updateLangButtons(); // update status of language bar buttons
 
 	void createCandidateWindow(Ime::EditSession* session);
@@ -361,6 +367,7 @@ private:
 	ULONGLONG lastCandidateWindowMoveTick_;
 	std::unique_ptr<Ime::MessageWindow> messageWindow_;
 	UINT messageTimerId_;
+	UINT_PTR candidateFocusWatchdogTimerId_;
 	HFONT font_;
 	HFONT commentFont_;
 	bool updateFont_;
