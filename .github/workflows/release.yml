@@ -184,6 +184,10 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
+          # GH 的 powershell shell 预置 ErrorActionPreference=stop：gh 查不到
+          # release 时向 stderr 写"release not found"会被当作异常终止脚本，
+          # 本步降级为 Continue，用 $LASTEXITCODE 显式判错。
+          $ErrorActionPreference = 'Continue'
           $assets = @(
             "installer\dist\moqi-im-windows-setup.exe",
             "installer\dist\moqi-im-windows-setup-lite.exe",
@@ -196,14 +200,15 @@ jobs:
               throw "Asset was not produced: $asset"
             }
           }
-          gh release view $env:TAG *> $null
+          gh release view $env:TAG > $null 2>&1
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $env:TAG already exists; uploading assets."
             gh release upload $env:TAG @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
           } else {
-            $args = @('release', 'create', $env:TAG) + $assets + @('--title', $env:TAG, '--generate-notes')
-            if ($env:PRERELEASE -eq 'true') {
-              $args += '--prerelease'
-            }
-            gh @args
+            gh release create $env:TAG @assets --title $env:TAG --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          }
+          if ($env:PRERELEASE -eq 'true') {
+            gh release edit $env:TAG --prerelease
           }
