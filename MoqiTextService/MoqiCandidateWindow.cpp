@@ -239,7 +239,6 @@ CandidateWindow::CandidateWindow(Ime::TextService* service, Ime::EditSession* se
       labelGap_(6),
       commentGap_(8),
       borderWidth_(1),
-      borderRadius_(4),
       minWidth_(200),
       preeditHeight_(0),
       preeditGap_(8),
@@ -619,7 +618,6 @@ void CandidateWindow::recalculateSize() {
         preeditHeight_ = 0;
         contentTop_ = borderWidth_ + padY_;
         resize(padX_ * 2 + borderWidth_ * 2, padY_ * 2 + borderWidth_ * 2);
-        applyWindowShape();
         return;
     }
 
@@ -723,7 +721,6 @@ void CandidateWindow::recalculateSize() {
     }
     const int height = padY_ * 2 + contentHeight + borderWidth_ * 2;
     resize(width, height);
-    applyWindowShape();
 
     std::wostringstream log;
     log << L"[CandidateWindow::recalculateSize] items=" << items_.size()
@@ -776,12 +773,9 @@ void CandidateWindow::onPaint() {
 
     HBRUSH backgroundBrush = ::CreateSolidBrush(backgroundColor_);
     HBRUSH borderBrush = ::CreateSolidBrush(kWindowBorder);
-    HRGN windowRgn = ::CreateRoundRectRgn(
-        rc.left, rc.top, rc.right + 1, rc.bottom + 1,
-        borderRadius_ * 2, borderRadius_ * 2);
-    ::FillRect(memdc, &rc, static_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH)));
-    ::FillRgn(memdc, windowRgn, backgroundBrush);
-    ::FrameRgn(memdc, windowRgn, borderBrush, borderWidth_, borderWidth_);
+    // 直角窗口（与微软拼音一致）：整块矩形填充 + 1px 边框，不做圆角裁剪。
+    ::FillRect(memdc, &rc, backgroundBrush);
+    ::FrameRect(memdc, &rc, borderBrush);
 
     int y = borderWidth_ + padY_;
     if (!preedit_.empty()) {
@@ -821,7 +815,6 @@ void CandidateWindow::onPaint() {
 
     ::BitBlt(hdc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, memdc, 0, 0, SRCCOPY);
 
-    ::DeleteObject(windowRgn);
     ::DeleteObject(borderBrush);
     ::DeleteObject(backgroundBrush);
     ::SelectObject(memdc, oldFont);
@@ -1028,25 +1021,6 @@ int CandidateWindow::itemCommentWidth(int index) const {
         return itemCommentWidths_[index];
     }
     return commentWidth_;
-}
-
-void CandidateWindow::applyWindowShape() {
-    if (!hwnd_) {
-        return;
-    }
-
-    RECT rc = {};
-    ::GetClientRect(hwnd_, &rc);
-    if (rc.right <= rc.left || rc.bottom <= rc.top) {
-        return;
-    }
-
-    HRGN region = ::CreateRoundRectRgn(
-        rc.left, rc.top, rc.right + 1, rc.bottom + 1,
-        borderRadius_ * 2, borderRadius_ * 2);
-    // bRedraw=FALSE：改区域自身会失效整个窗口，TRUE 会强制同步重画一帧，
-    // 打字时每个按键重设圆角区域就会闪。后续统一 refresh。
-    ::SetWindowRgn(hwnd_, region, FALSE);
 }
 
 } // namespace Moqi

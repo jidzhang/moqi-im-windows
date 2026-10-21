@@ -99,7 +99,6 @@ private:
     void onMouseLeave();
     void onMouseWheel(WPARAM wp, LPARAM lp);
     void paintPreeditCursor(HDC hdc, const RECT& preeditRc);
-    void applyWindowShape();
 
 private:
     BOOL shown_;
@@ -117,7 +116,6 @@ private:
     int labelGap_;
     int commentGap_;
     int borderWidth_;
-    int borderRadius_;
     int minWidth_;
     int preeditHeight_;
     int preeditGap_;
