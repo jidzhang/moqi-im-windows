@@ -1,8 +1,9 @@
 name: Nightly
 
-# 仅手动触发：push 到 main 每次都全量构建 25 分钟并覆盖 nightly pre-release，
-# 正式验证/发版走 release.yml（2026-10-21 定）。
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
