@@ -73,7 +73,7 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
         throw "Invalid version '$Version'; expected vX.Y.Z or X.Y.Z."
     }
     Set-Content -LiteralPath (Join-Path $RepoRoot "version.txt") `
-        -Value $normalizedVersion -NoNewline -Encoding ascii
+        -Value "$normalizedVersion`n" -NoNewline -Encoding ascii
     Write-Host "[INFO] version.txt <- $normalizedVersion"
 }
 
