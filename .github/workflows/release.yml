@@ -101,6 +101,34 @@ jobs:
             -ProtobufRoot "$env:PROTOBUF_ROOT" `
             -Version "${{ steps.version.outputs.version }}"
 
+      - name: Download grammar model
+        run: |
+          # full 包内置的大语法模型不在仓库里（196.8MB，gitignore），从官方
+          # 上游 release 固定 tag 下载；大小校验防半截文件。
+          $gramDir = Join-Path $env:GITHUB_WORKSPACE "moqi-im-windows\installer\dist"
+          $gramPath = Join-Path $gramDir "zh-hans-t-essay-bgw.gram"
+          Invoke-WebRequest `
+            -Uri "https://github.com/lotem/rime-octagram-data/releases/download/20260712/zh-hans-t-essay-bgw.gram" `
+            -OutFile $gramPath
+          $len = (Get-Item -LiteralPath $gramPath).Length
+          if ($len -ne 206396460) {
+            throw "Grammar model size mismatch: got $len, expected 206396460"
+          }
+
+      - name: Build lite and full installers
+        working-directory: ${{ github.workspace }}/moqi-im-windows
+        run: |
+          # 三个包必须共用 _all_in_package.ps1 生成的同一个 stage，
+          # 只靠 -OutputName / -ExcludeBuild / -GramPath 区分。
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
+            -StageDir .\installer\stage `
+            -OutputName moqi-im-windows-setup-lite `
+            -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
+            -StageDir .\installer\stage `
+            -OutputName moqi-im-windows-setup-full `
+            -GramPath .\installer\dist\zh-hans-t-essay-bgw.gram
+
       - name: Verify embedded version
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
@@ -116,16 +144,26 @@ jobs:
             throw "DLL version '$productVersion' does not match release version '$version'"
           }
 
-      - name: Generate checksum
+      - name: Generate checksums
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
-          $exe = "installer\dist\moqi-im-windows-setup.exe"
-          if (-not (Test-Path -LiteralPath $exe)) {
-            throw "Installer was not produced: $exe"
+          $assets = @(
+            "installer\dist\moqi-im-windows-setup.exe",
+            "installer\dist\moqi-im-windows-setup-lite.exe",
+            "installer\dist\moqi-im-windows-setup-full.exe",
+            "installer\dist\zh-hans-t-essay-bgw.gram"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) {
+              throw "Asset was not produced: $asset"
+            }
           }
-          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  moqi-im-windows-setup.exe" | Out-File -FilePath "$exe.sha256" -Encoding ascii
-          Get-Item -LiteralPath $exe | Select-Object Name, Length, LastWriteTime | Format-List
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLower()
+            "$hash  $(Split-Path -Leaf $asset)"
+          }
+          $lines | Out-File -FilePath "installer\dist\SHA256SUMS.txt" -Encoding ascii
+          Get-ChildItem "installer\dist" -File | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -133,7 +171,10 @@ jobs:
           name: moqi-im-windows-${{ steps.version.outputs.tag }}
           path: |
             moqi-im-windows/installer/dist/moqi-im-windows-setup.exe
-            moqi-im-windows/installer/dist/moqi-im-windows-setup.exe.sha256
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-lite.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-full.exe
+            moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
+            moqi-im-windows/installer/dist/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -143,15 +184,24 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
-          $asset = "installer\dist\moqi-im-windows-setup.exe"
-          $checksum = "$asset.sha256"
-
+          $assets = @(
+            "installer\dist\moqi-im-windows-setup.exe",
+            "installer\dist\moqi-im-windows-setup-lite.exe",
+            "installer\dist\moqi-im-windows-setup-full.exe",
+            "installer\dist\zh-hans-t-essay-bgw.gram",
+            "installer\dist\SHA256SUMS.txt"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) {
+              throw "Asset was not produced: $asset"
+            }
+          }
           gh release view $env:TAG *> $null
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $env:TAG already exists; uploading assets."
-            gh release upload $env:TAG $asset $checksum --clobber
+            gh release upload $env:TAG @assets --clobber
           } else {
-            $args = @('release', 'create', $env:TAG, $asset, $checksum, '--title', $env:TAG, '--generate-notes')
+            $args = @('release', 'create', $env:TAG) + $assets + @('--title', $env:TAG, '--generate-notes')
             if ($env:PRERELEASE -eq 'true') {
               $args += '--prerelease'
             }

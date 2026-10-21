@@ -844,12 +844,33 @@ void CandidateWindow::paintItem(HDC hdc, int index, int x, int y) {
     const COLORREF commentColor = selected ? commentHighlightColor_ : commentColor_;
 
     if (selected) {
+        const int row = index / candPerRow_;
+        const int col = index % candPerRow_;
+        RECT clientRc = {};
+        ::GetClientRect(hwnd_, &clientRc);
+
         if (candPerRow_ == 1) {
-            RECT clientRc = {};
-            ::GetClientRect(hwnd_, &clientRc);
             highlightRc.left = borderWidth_ + padX_;
             highlightRc.right = clientRc.right - borderWidth_ - padX_;
+        } else {
+            // 微软拼音风格：行首选中项的背景贴到窗口左边缘；与右侧候选之间
+            // 只铺到间距中点，避免背景紧贴下一个候选的序号。
+            if (col == 0) {
+                highlightRc.left = borderWidth_;
+            }
+            if (col + 1 < candPerRow_ && index + 1 < static_cast<int>(items_.size())) {
+                highlightRc.right -= candSpacing_ / 2;
+            }
         }
+
+        // 上下也贴到窗口边缘；有预编辑时上边缘落在分隔线下方。
+        if (row == 0) {
+            highlightRc.top = (std::max)(borderWidth_, contentTop_ - padY_);
+        }
+        if (index + candPerRow_ >= static_cast<int>(items_.size())) {
+            highlightRc.bottom = clientRc.bottom - borderWidth_;
+        }
+
         HBRUSH highlightBrush = ::CreateSolidBrush(bgColor);
         ::FillRect(hdc, &highlightRc, highlightBrush);
         ::DeleteObject(highlightBrush);

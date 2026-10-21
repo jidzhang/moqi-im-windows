@@ -4,7 +4,7 @@
 
 #define MyAppName "墨奇输入法"
 #define MyAppPublisher "Moqi"
-#define MyAppURL "https://github.com/gaboolic/moqi-im-windows"
+#define MyAppURL "https://github.com/jidzhang/moqi-im-windows"
 #define MyAppId "{{C7A6A2D5-16C7-4BE4-8F52-E96D6D6A9E42}"
 #define ImeClsid "{{8F204C91-2D7A-4B3E-9E1F-6A5C0D8B2E7F}}"
 
@@ -17,10 +17,22 @@
   #define StageDir "..\stage"
 #endif
 
+; Installer variants share one staged tree:
+;   -MyOutputBaseFilename  output file name
+;   -MyExcludeBuild        exclude precompiled Rime data (lite package)
+;   -MyGramPath            add an external .gram model (full package)
+#ifndef MyOutputBaseFilename
+  #define MyOutputBaseFilename "moqi-im-windows-setup"
+#endif
+
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+; ARP（卸载程序列表）显示名：显式只写应用名；版本单独存 DisplayVersion，
+; 由系统界面自行拼装。默认值会用 NameAndVersion 消息拼出"名称 版本 x.y.z"，
+; 与 2026-10-21 定稿的显示口径（不带"版本"字样）冲突。
+UninstallDisplayName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -34,7 +46,7 @@ CloseApplications=yes
 RestartApplications=no
 WizardStyle=modern
 OutputDir=dist
-OutputBaseFilename=moqi-im-windows-setup
+OutputBaseFilename={#MyOutputBaseFilename}
 Compression=lzma2/max
 SolidCompression=yes
 WizardSizePercent=110,100
@@ -44,8 +56,21 @@ DisableWelcomePage=no
 ; Use the vendored translation file so packaging does not depend on local Inno Setup language packs.
 Name: "chinesesimplified"; MessagesFile: ".\Inno-Setup-Chinese-Simplified-Translation\ChineseSimplified.isl"
 
+[Messages]
+; Show "墨奇输入法 1.0.0" (no "版本" wording); override here so the third-party
+; translation submodule stays pristine.
+NameAndVersion=%1 %2
+AboutSetupMessage=%1 %2%n%3%n%n%1 主页：%n%4
+
 [Files]
+#ifdef MyExcludeBuild
+Source: "{#StageDir}\win32\MoqiIM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "{#MyExcludeBuild}"
+#else
 Source: "{#StageDir}\win32\MoqiIM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
+#ifdef MyGramPath
+Source: "{#MyGramPath}"; DestDir: "{app}\moqi-ime\input_methods\rime\data"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}\Uninstall"; Filename: "{uninstallexe}"

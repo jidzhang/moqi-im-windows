@@ -18,7 +18,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $StageDir,
     [string] $IssPath = '',
-    [string] $Version = ''
+    [string] $Version = '',
+    [string] $OutputName = '',
+    [string] $ExcludeBuild = '',
+    [string] $GramPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,13 +98,28 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 $argStage = '/DStageDir=' + $StageDir
 $argVersion = '/DMyAppVersion=' + $Version
+$isccArgs = @("`"$IssPath`"", $argStage, $argVersion)
+if (-not [string]::IsNullOrWhiteSpace($OutputName)) {
+    $isccArgs += '/DMyOutputBaseFilename=' + $OutputName
+}
+if (-not [string]::IsNullOrWhiteSpace($ExcludeBuild)) {
+    $isccArgs += '/DMyExcludeBuild=' + $ExcludeBuild
+}
+if (-not [string]::IsNullOrWhiteSpace($GramPath)) {
+    if (-not (Test-Path -LiteralPath $GramPath)) {
+        Write-Error "Gram file not found: $GramPath"
+    }
+    $GramPath = (Resolve-Path -LiteralPath $GramPath).Path
+    $isccArgs += '/DMyGramPath=' + $GramPath
+}
 Write-Host "ISCC: $iscc"
-Write-Host "Args: `"$IssPath`" $argStage $argVersion"
-$p = Start-Process -FilePath $iscc -ArgumentList @("`"$IssPath`"", $argStage, $argVersion) -Wait -PassThru -NoNewWindow
+Write-Host "Args: `"$IssPath`" $($isccArgs[1..($isccArgs.Count - 1)] -join ' ')"
+$p = Start-Process -FilePath $iscc -ArgumentList $isccArgs -Wait -PassThru -NoNewWindow
 if ($p.ExitCode -ne 0) {
     Write-Error "ISCC failed with exit code $($p.ExitCode)"
 }
 
 $dist = Join-Path $PSScriptRoot 'dist'
-Write-Host "Output: $(Join-Path $dist 'moqi-im-windows-setup.exe')"
+$outputBase = if ([string]::IsNullOrWhiteSpace($OutputName)) { 'moqi-im-windows-setup' } else { $OutputName }
+Write-Host "Output: $(Join-Path $dist ($outputBase + '.exe'))"
 exit 0

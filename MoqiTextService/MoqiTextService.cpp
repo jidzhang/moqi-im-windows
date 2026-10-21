@@ -1064,6 +1064,75 @@ void TextService::markCandidateContentApplied(const std::wstring& renderedPreedi
 	hasAppliedCandidateContent_ = true;
 }
 
+// CUAS 非行内组字宿主（Win10 记事本等 EDIT 控件）把组字串画在本线程的
+// "MSCTFIME Composition"/"MSCTFIME UI" 浮窗里；该浮窗底部比系统插入符行
+// 底低约 2px（2026-10-21 实测：插入符行 228..249，同行浮窗 bottom=251），
+// 虚线正画在浮窗底部的这条下延里。候选窗贴着插入符 bottom 落，上沿刚好
+// 盖掉虚线（用户实报"记事本看不到虚线，看上去是候选窗口挡住了"）。
+// 行内组字宿主（Electron、Win11 记事本）没有这个浮窗——取不到就保持
+// 原锚点，行为不变。
+struct CuasCompositionLookup {
+	int lineTop = 0;          // 插入符行 top，用于挑同行的那一个浮窗
+	int lineTolerance = 0;    // 允许的 |浮窗 top - 行 top| 上界（防陈旧浮窗）
+	RECT rect{};
+	bool found = false;
+};
+
+BOOL CALLBACK findCuasCompositionWindow(HWND hwnd, LPARAM lp) {
+	CuasCompositionLookup* lookup = reinterpret_cast<CuasCompositionLookup*>(lp);
+	wchar_t className[48] = {};
+	if (::GetClassNameW(hwnd, className, 48) == 0) {
+		return TRUE;
+	}
+	if (wcscmp(className, L"MSCTFIME Composition") != 0 &&
+		wcscmp(className, L"MSCTFIME UI") != 0) {
+		return TRUE;
+	}
+	if (!::IsWindowVisible(hwnd)) {
+		return TRUE;
+	}
+	RECT rect{};
+	if (!::GetWindowRect(hwnd, &rect)) {
+		return TRUE;
+	}
+	if (rect.right <= rect.left || rect.bottom <= rect.top) {
+		return TRUE;
+	}
+	const int topDistance = rect.top > lookup->lineTop
+		? rect.top - lookup->lineTop
+		: lookup->lineTop - rect.top;
+	if (topDistance > lookup->lineTolerance) {
+		return TRUE;
+	}
+	if (!lookup->found || topDistance < lookup->lineTolerance) {
+		lookup->rect = rect;
+		lookup->found = true;
+		lookup->lineTolerance = topDistance;
+	}
+	return TRUE;
+}
+
+// 返回本线程 CUAS 组字浮窗的矩形；只接受与插入符同行的浮窗（陈旧浮窗
+// 会把候选窗拽去别的行）。找不到返回 false。
+bool cuasCompositionWindowRect(const RECT& textRect, RECT* rect) {
+	const int lineHeight = textRect.bottom - textRect.top;
+	CuasCompositionLookup lookup;
+	lookup.lineTop = textRect.top;
+	lookup.lineTolerance = (lineHeight > 0 ? lineHeight : 24) * 2 + 8;
+	::EnumThreadWindows(::GetCurrentThreadId(), findCuasCompositionWindow,
+		reinterpret_cast<LPARAM>(&lookup));
+	if (!lookup.found) {
+		return false;
+	}
+	*rect = lookup.rect;
+	return true;
+}
+
+// 组字浮窗底部到候选窗顶的间距：0 = 候选窗顶正好贴住浮窗底边（浮窗
+// 最后一行像素之下），不盖虚线也没有多余缝隙。初版 +2px 用户实测偏远
+// （"可以再调近一点"，2026-10-21 定档）。
+constexpr int kCuasCompositionGapPx = 0;
+
 bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, const wchar_t* reason, bool throttleSamePosition) {
 	if (!candidateWindow_) {
 		return false;
@@ -1083,6 +1152,11 @@ bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, cons
 	}
 
 	POINT nextPos{textRect.left, textRect.bottom};
+	RECT compositionRect{};
+	if (cuasCompositionWindowRect(textRect, &compositionRect) &&
+		compositionRect.bottom + kCuasCompositionGapPx > nextPos.y) {
+		nextPos.y = compositionRect.bottom + kCuasCompositionGapPx;
+	}
 	const ULONGLONG now = ::GetTickCount64();
 	if (throttleSamePosition && hasLastCandidateWindowPos_ &&
 		lastCandidateWindowPos_.x == nextPos.x &&
@@ -1100,6 +1174,10 @@ bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, cons
 	std::wostringstream log;
 	log << L"[TextService::" << reason << L"] moved left=" << nextPos.x
 		<< L" bottom=" << nextPos.y;
+	if (compositionRect.bottom > 0 || compositionRect.top > 0) {
+		log << L" cuas_rect=(" << compositionRect.left << L"," << compositionRect.top
+			<< L"," << compositionRect.right << L"," << compositionRect.bottom << L")";
+	}
 	appendCandidateWindowLog(log.str());
 	return true;
 }
