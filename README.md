@@ -12,6 +12,10 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 
 默认输入法：[`白霜拼音`](https://github.com/gaboolic/rime-frost)。
 
+> **关于本仓库**：本仓库是墨奇输入法 Windows 版的**深度优化分支**，由 [@jidzhang](https://github.com/jidzhang) 维护。
+> 感谢原作者 [@gaboolic](https://github.com/gaboolic)——墨奇输入法、moqi-ime 引擎与白霜拼音均出自其手，
+> 本分支的所有优化都建立在上游的成果之上。上游原仓库：<https://github.com/gaboolic/moqi-im-windows>。
+
 为什么选择白霜拼音？
 
 1. 白霜拼音经过评测，词频准确度是最高的，超过了商业输入法。[查看rime各方案评测结果](https://github.com/gaboolic/rime-schema-compare/blob/main/report/latest.md)
@@ -19,7 +23,15 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 
 ## 快速开始
 
-下载安装包：[moqi-im-windows-setup.exe](https://github.com/gaboolic/moqi-im-windows/releases)
+从本仓库 [Releases](https://github.com/jidzhang/moqi-im-windows/releases) 下载安装包，三档任选：
+
+| 文件 | 内容 | 适合谁 |
+|---|---|---|
+| `moqi-im-windows-setup-lite.exe`（约 35MB） | 不含预编译词库 | 想要最小安装包 |
+| `moqi-im-windows-setup.exe`（约 73MB） | 含预编译词库 | 绝大多数用户 |
+| `moqi-im-windows-setup-full.exe`（约 228MB） | 预编译词库 + 大语法模型 | 想要更好的长句效果 |
+
+另有独立的大语法模型 `zh-hans-t-essay-bgw.gram` 可供已装 lite/标准包的用户后补（放进 `%APPDATA%\Moqi\Rime` 即自动启用，无需管理员权限）。详见 [installer/PACKAGES.md](installer/PACKAGES.md)。
 
 ## 特色功能
 
@@ -64,6 +76,33 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
   ]
 }
 ```
+
+## 本分支的深度优化
+
+本分支在上游基础上做了持续的工程与算法优化，以下均为实测数据（实验记录见各轮评测报告）：
+
+**性能**
+
+- 按键延迟：从每键 4 次 RPC 轮询的 ≈11.4ms 降到 DLL 事件驱动读 ≈0.73ms/键、后端 0.40ms/键
+- 首次输入卡顿消除：修复 librime schema 循环依赖 + 启动即预热后端
+
+**准确率**
+
+- 换位容错层：换位类错字 top-1 23.4% → 51.6%（音节图换位边 + 门控，守卫维度零回归）
+- essay-bgw 大语法模型接入与全套调优：整句场景 +1.5，混合连打组句 +2.4
+- 英文降位：中文可解析的输入不再被英文词劫持（配对 A/B +0.33）
+
+**输入体验**
+
+- 数字/小数点直通：`4.`、`4.5` 直接上屏（对齐微软拼音），组字中数字仍用于选候选
+- 候选窗：微软式锚定与同屏、直角窗口、首候选高亮四边贴边
+- 修复记事本等宿主组字虚线被候选窗遮挡的问题（CUAS 组字浮窗精确锚定）
+
+**安装与发布**
+
+- 三档安装包：lite / 标准 / full（含大语法模型），按需选择
+- 大语法模型免管理员放置：放进 `%APPDATA%\Moqi\Rime` 即自动启用，升级重装不丢
+- GitHub Actions 三档自动发版，语法模型从官方上游 release 固定下载
 
 ## 功能演示
 
@@ -168,6 +207,15 @@ Windows 侧的职责主要是：
 - [ITfTextInputProcessor 接口](https://docs.microsoft.com/en-us/windows/win32/api/msctf/nn-msctf-itftextinputprocessor)
 - [PIME](https://github.com/EasyIME/PIME)
 - [小狼毫](https://github.com/rime/weasel)
+
+## 致谢
+
+本分支站在下面这些项目和作者的肩膀上：
+
+- **[gaboolic](https://github.com/gaboolic)**：墨奇输入法原作者。moqi-ime 引擎、白霜拼音、墨奇音形、墨奇五笔整句等核心成果均出自其手，本分支的一切优化都基于这些工作
+- [Rime / 中州韵 librime](https://github.com/rime/librime)：输入法引擎
+- [小狼毫 weasel](https://github.com/rime/weasel)、[PIME](https://github.com/EasyIME/PIME)、[libIME2](https://github.com/EasyIME/libIME2)：Windows TSF 实现的参考与基础库
+- [lotem/rime-octagram-data](https://github.com/lotem/rime-octagram-data)：官方语法模型（essay-bgw）
 
 ## 友情链接
 
