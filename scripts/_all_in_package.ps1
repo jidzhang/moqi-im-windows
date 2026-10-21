@@ -27,7 +27,8 @@ param(
     [string] $Configuration = "Release",
     [string] $Generator = "Visual Studio 17 2022",
     [string] $ProtobufRoot = "",
-    [string] $ProtobufSourceDir = ""
+    [string] $ProtobufSourceDir = "",
+    [string] $Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +60,22 @@ function Invoke-Step {
 $scriptRepoRoot = Join-Path $PSScriptRoot ".."
 if (-not $RepoRoot) { $RepoRoot = $scriptRepoRoot }
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+
+# Optional release version (e.g. "v1.2.3" from a git tag). It is written to
+# version.txt, which CMake embeds into the binaries and build-installer.ps1
+# passes to Inno Setup.
+if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    $normalizedVersion = $Version.Trim()
+    if ($normalizedVersion.StartsWith('v') -or $normalizedVersion.StartsWith('V')) {
+        $normalizedVersion = $normalizedVersion.Substring(1)
+    }
+    if ($normalizedVersion -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.\-]+)?$') {
+        throw "Invalid version '$Version'; expected vX.Y.Z or X.Y.Z."
+    }
+    Set-Content -LiteralPath (Join-Path $RepoRoot "version.txt") `
+        -Value $normalizedVersion -NoNewline -Encoding ascii
+    Write-Host "[INFO] version.txt <- $normalizedVersion"
+}
 
 if (-not $MoqiImeRoot) { $MoqiImeRoot = Join-Path $RepoRoot "..\moqi-ime" }
 $MoqiImeRoot = [System.IO.Path]::GetFullPath($MoqiImeRoot)

@@ -8,6 +8,11 @@
 #define MyAppId "{{C7A6A2D5-16C7-4BE4-8F52-E96D6D6A9E42}"
 #define ImeClsid "{{8F204C91-2D7A-4B3E-9E1F-6A5C0D8B2E7F}}"
 
+; Injected by build-installer.ps1 (read from version.txt, or the release tag in CI).
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0"
+#endif
+
 #ifndef StageDir
   #define StageDir "..\stage"
 #endif
@@ -15,7 +20,7 @@
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppName}
-AppVersion=1.0.0
+AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}

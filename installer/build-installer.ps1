@@ -17,7 +17,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string] $StageDir,
-    [string] $IssPath = ''
+    [string] $IssPath = '',
+    [string] $Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,10 +81,23 @@ Then re-run this script.
 "@
 }
 
+# Version: an explicit -Version wins; otherwise use version.txt (single source
+# of truth for the DLL resources and the installer).
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $versionFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'version.txt'
+    if (Test-Path -LiteralPath $versionFile) {
+        $Version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+    }
+}
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = '1.0.0'
+}
+
 $argStage = '/DStageDir=' + $StageDir
+$argVersion = '/DMyAppVersion=' + $Version
 Write-Host "ISCC: $iscc"
-Write-Host "Args: `"$IssPath`" $argStage"
-$p = Start-Process -FilePath $iscc -ArgumentList @("`"$IssPath`"", $argStage) -Wait -PassThru -NoNewWindow
+Write-Host "Args: `"$IssPath`" $argStage $argVersion"
+$p = Start-Process -FilePath $iscc -ArgumentList @("`"$IssPath`"", $argStage, $argVersion) -Wait -PassThru -NoNewWindow
 if ($p.ExitCode -ne 0) {
     Write-Error "ISCC failed with exit code $($p.ExitCode)"
 }
