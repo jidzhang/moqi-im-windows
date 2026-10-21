@@ -23,6 +23,8 @@
 #include "../proto/ProtoFraming.h"
 #include "proto/moqi.pb.h"
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <json/json.h>
 
 #include "MoqiTextService.h"
@@ -30,12 +32,6 @@
 #include <Shellapi.h>
 #include <VersionHelpers.h> // Provided by Windows SDK >= 8.1
 #include <Winnls.h> // for IS_HIGH_SURROGATE() macro for checking UTF16 surrogate pairs
-#include <mmsystem.h> // for timeBeginPeriod/timeEndPeriod (timer resolution during RPC waits)
-#pragma comment(lib, "winmm.lib")
-#include <algorithm>
-#include <cctype>
-#include <cstdlib>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -51,12 +47,10 @@ namespace Moqi {
 static constexpr UINT ASYNC_RPC_POLL_INTERVAL_MS = 50;
 static constexpr int FIRST_PRINTABLE_KEY_RPC_WAIT_MS = 200;
 static constexpr DWORD RPC_BUSY_POLL_INTERVAL_MS = 5;
-// Poll interval while waiting for a pipe reply. Must stay small (1-2ms): the
-// reply normally arrives within a few ms, and a large Sleep() would add up to
-// that delay to every keystroke (the old 50ms poll made typing feel very
-// laggy). timeBeginPeriod(1) inside the wait keeps this a real ~2ms instead of
-// the default ~15.6ms system tick.
-static constexpr DWORD RPC_REPLY_POLL_INTERVAL_MS = 2;
+// Timeout for writing one request into the pipe. The 64KB pipe buffer accepts
+// a request immediately unless the backend is completely stuck, so this only
+// bounds a pathological case.
+static constexpr DWORD RPC_WRITE_TIMEOUT_MS = 2000;
 
 // Bounded waits so a not-yet-started or hung MoqiLauncher/backend can never
 // block the TSF thread indefinitely:
@@ -1439,27 +1433,9 @@ bool Client::readPendingPipeMessage(std::string &serializedReply) {
     return false;
   }
 
-  char buf[1024];
-  DWORD rlen = 0;
-  bool hasMoreData = false;
-  if (!::ReadFile(pipe_, buf, sizeof(buf), &rlen, nullptr)) {
-    if (::GetLastError() == ERROR_MORE_DATA) {
-      hasMoreData = true;
-    } else {
-      return false;
-    }
-  }
-  serializedReply.append(buf, rlen);
-
-  while (hasMoreData) {
-    if (::ReadFile(pipe_, buf, sizeof(buf), &rlen, nullptr)) {
-      hasMoreData = false;
-    } else if (::GetLastError() != ERROR_MORE_DATA) {
-      return false;
-    }
-    serializedReply.append(buf, rlen);
-  }
-  return true;
+  // Data is already available, so the overlapped read completes immediately;
+  // the short timeout only guards against a race with the server closing.
+  return readPipeMessageWithTimeout(pipe_, serializedReply, 250, nullptr);
 }
 
 void Client::enqueueAsyncResponse(const moqi::protocol::ServerResponse &response) {
@@ -1540,11 +1516,31 @@ void Client::pollAsyncResponses() {
   flushPendingAsyncResponsesWithCurrentContext();
 }
 
-// Wait up to timeoutMs for the next pipe message and read it fully.
-// Returns false on error or timeout. A hung backend can therefore no longer
-// block the TSF thread forever (the old TransactNamedPipe had no timeout).
-// When the wait expires without a pipe error, *timedOut is set to true so the
-// caller can distinguish "backend is slow" from "connection is broken".
+namespace {
+
+// Waits for an overlapped operation that is already in flight on |pipe|.
+// Returns ERROR_SUCCESS when it completed, ERROR_MORE_DATA when a message-mode
+// read filled the buffer, ERROR_TIMEOUT after cancelling it, or a Win32 error.
+DWORD waitOverlappedResult(HANDLE pipe, OVERLAPPED &overlapped,
+                           DWORD timeoutMs, DWORD &transferred) {
+  if (::WaitForSingleObject(overlapped.hEvent, timeoutMs) != WAIT_OBJECT_0) {
+    ::CancelIoEx(pipe, &overlapped);
+    ::WaitForSingleObject(overlapped.hEvent, INFINITE);
+    return ERROR_TIMEOUT;
+  }
+  if (::GetOverlappedResult(pipe, &overlapped, &transferred, FALSE)) {
+    return ERROR_SUCCESS;
+  }
+  return ::GetLastError();
+}
+
+} // namespace
+
+// Reads exactly one pipe message (a message-mode pipe may deliver it in
+// several chunks if it is larger than the read buffer). The handle is opened
+// with FILE_FLAG_OVERLAPPED, so waiting for a reply is event-driven instead of
+// polling: the old PeekNamedPipe + Sleep(2ms) loop added ~2-3ms to *every* RPC,
+// and a keystroke issues four RPCs, which was the dominant typing latency.
 bool Client::readPipeMessageWithTimeout(HANDLE pipe, std::string &message,
                                         DWORD timeoutMs, bool *timedOut) {
   message.clear();
@@ -1556,70 +1552,75 @@ bool Client::readPipeMessageWithTimeout(HANDLE pipe, std::string &message,
   }
   const ULONGLONG deadline = ::GetTickCount64() + timeoutMs;
 
-  // Raise the timer resolution for the duration of the wait. PeekNamedPipe +
-  // Sleep() polling is how the reply is discovered, and with the default
-  // ~15.6ms system tick a reply that arrives a few ms after the poll would not
-  // be noticed for up to ~50ms -- once per RPC, and each keystroke issues
-  // several RPCs, which made typing feel very laggy. timeBeginPeriod is
-  // ref-counted by the OS and released as soon as the reply arrives, so the
-  // impact on the rest of the system is limited to the wait itself.
-  const MMRESULT timerResult = ::timeBeginPeriod(1);
-  const bool timerPeriodActive = timerResult == TIMERR_NOERROR;
-
-  char buf[1024];
-  while (true) {
-    DWORD bytesAvailable = 0;
-    if (!::PeekNamedPipe(pipe, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
-      if (timerPeriodActive) {
-        ::timeEndPeriod(1);
-      }
+  char buf[4096];
+  for (;;) {
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (overlapped.hEvent == nullptr) {
       return false;
     }
-    if (bytesAvailable > 0) {
-      DWORD rlen = 0;
-      bool hasMoreData = false;
-      if (!::ReadFile(pipe, buf, sizeof(buf), &rlen, nullptr)) {
-        if (::GetLastError() == ERROR_MORE_DATA) {
-          hasMoreData = true;
-        } else { // unknown error
-          if (timerPeriodActive) {
-            ::timeEndPeriod(1);
-          }
-          return false;
-        }
-      }
-      message.append(buf, rlen);
 
-      while (hasMoreData) {
-        if (::ReadFile(pipe, buf, sizeof(buf), &rlen, nullptr)) {
-          hasMoreData = false;
-        } else if (::GetLastError() != ERROR_MORE_DATA) { // unknown error
-          if (timerPeriodActive) {
-            ::timeEndPeriod(1);
-          }
-          return false;
-        }
-        message.append(buf, rlen);
+    DWORD rlen = 0;
+    DWORD result = ERROR_SUCCESS;
+    if (!::ReadFile(pipe, buf, sizeof(buf), &rlen, &overlapped)) {
+      const DWORD error = ::GetLastError();
+      if (error != ERROR_IO_PENDING) {
+        result = error;
+      } else {
+        const ULONGLONG now = ::GetTickCount64();
+        const DWORD remaining =
+            now >= deadline ? 0 : static_cast<DWORD>(deadline - now);
+        result = waitOverlappedResult(pipe, overlapped, remaining, rlen);
       }
-      if (timerPeriodActive) {
-        ::timeEndPeriod(1);
-      }
-      return true;
     }
-    const ULONGLONG now = ::GetTickCount64();
-    if (now >= deadline) {
+    ::CloseHandle(overlapped.hEvent);
+
+    if (result == ERROR_TIMEOUT) {
       if (timedOut != nullptr) {
         *timedOut = true;
       }
-      if (timerPeriodActive) {
-        ::timeEndPeriod(1);
-      }
-      return false; // timed out waiting for the reply
+      return false;
     }
-    ::Sleep(static_cast<DWORD>(
-        (std::min)(static_cast<ULONGLONG>(RPC_REPLY_POLL_INTERVAL_MS),
-                   deadline - now)));
+    if (result != ERROR_SUCCESS && result != ERROR_MORE_DATA) {
+      return false;
+    }
+    // A successful zero-byte read means the other side closed the pipe.
+    if (rlen == 0) {
+      return false;
+    }
+    message.append(buf, rlen);
+    if (result == ERROR_SUCCESS) {
+      return true; // whole message read
+    }
+    // ERROR_MORE_DATA: the buffer filled up, the rest follows immediately.
   }
+}
+
+// Writes one request as a single pipe message. The pipe is overlapped, so the
+// write normally completes immediately; the timeout only bounds a pathological
+// "backend stuck with a full pipe" case.
+bool Client::writePipeMessageWithTimeout(HANDLE pipe, const char *data,
+                                         size_t len, DWORD timeoutMs) {
+  if (pipe == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  OVERLAPPED overlapped = {};
+  overlapped.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (overlapped.hEvent == nullptr) {
+    return false;
+  }
+
+  DWORD written = 0;
+  DWORD result = ERROR_SUCCESS;
+  if (!::WriteFile(pipe, data, static_cast<DWORD>(len), &written,
+                   &overlapped)) {
+    const DWORD error = ::GetLastError();
+    result = error == ERROR_IO_PENDING
+                 ? waitOverlappedResult(pipe, overlapped, timeoutMs, written)
+                 : error;
+  }
+  ::CloseHandle(overlapped.hEvent);
+  return result == ERROR_SUCCESS && written == len;
 }
 
 bool Client::callRpcPipe(HANDLE pipe, const std::string &serializedRequest,
@@ -1628,13 +1629,10 @@ bool Client::callRpcPipe(HANDLE pipe, const std::string &serializedRequest,
     return false;
   }
   // Write the request as one pipe message, then wait for the reply with a
-  // bounded deadline (WriteFile + ReadFile instead of the unbounded
-  // TransactNamedPipe).
-  DWORD written = 0;
-  if (!::WriteFile(pipe, serializedRequest.data(),
-                   static_cast<DWORD>(serializedRequest.size()), &written,
-                   nullptr) ||
-      written != serializedRequest.size()) {
+  // bounded deadline. Both operations are overlapped and event-driven.
+  if (!writePipeMessageWithTimeout(pipe, serializedRequest.data(),
+                                   serializedRequest.size(),
+                                   RPC_WRITE_TIMEOUT_MS)) {
     return false;
   }
   return readPipeMessageWithTimeout(pipe, serializedReply,
@@ -1739,8 +1737,10 @@ bool Client::isPipeCreatedByMoqiServer(HANDLE pipe) {
 HANDLE Client::connectPipe(const wchar_t *pipeName, int timeoutMs) {
   HANDLE pipe = INVALID_HANDLE_VALUE;
   if (WaitNamedPipe(pipeName, timeoutMs)) {
+    // FILE_FLAG_OVERLAPPED lets readPipeMessageWithTimeout wait on an event
+    // instead of polling PeekNamedPipe + Sleep(2ms) on every RPC.
     pipe = CreateFile(pipeName, GENERIC_READ | GENERIC_WRITE, 0, NULL,
-                      OPEN_EXISTING, 0, NULL);
+                      OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
   }
 
   if (pipe != INVALID_HANDLE_VALUE) {
@@ -1798,9 +1798,10 @@ void Client::sendRpcNoWait(const char *methodName) {
   if (!Proto::serializeMessage(req, serializedRequest)) {
     return;
   }
-  DWORD written = 0;
-  ::WriteFile(pipe_, serializedRequest.data(),
-              static_cast<DWORD>(serializedRequest.size()), &written, nullptr);
+  // Fire-and-forget: a short bounded overlapped write so a stuck backend can
+  // never block the TSF thread.
+  writePipeMessageWithTimeout(pipe_, serializedRequest.data(),
+                              serializedRequest.size(), 250);
 }
 
 bool Client::ensureLauncherRunning() {

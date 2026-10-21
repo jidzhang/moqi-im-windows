@@ -102,6 +102,7 @@ private:
     bool waitForRpcConnection(int connectAttempts);
     bool completeConnectionHandshake();
     bool callRpcPipe(HANDLE pipe, const std::string& serializedRequest, std::string& serializedReply, bool* timedOut = nullptr);
+    bool writePipeMessageWithTimeout(HANDLE pipe, const char* data, size_t len, DWORD timeoutMs);
     bool readPipeMessageWithTimeout(HANDLE pipe, std::string& message, DWORD timeoutMs, bool* timedOut = nullptr);
 	bool waitForRpcIdle(int timeoutMs) const;
 	bool readPendingPipeMessage(std::string& serializedReply);
