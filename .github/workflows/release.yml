@@ -82,15 +82,41 @@ jobs:
             choco install innosetup --yes --no-progress
           }
 
+      - name: Cache protoc
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/protoc-${{ env.PROTOBUF_VERSION }}-win64
+          key: protoc-${{ env.PROTOBUF_VERSION }}
+
       - name: Download protoc
         run: |
           $protocRoot = Join-Path $env:RUNNER_TEMP "protoc-$env:PROTOBUF_VERSION-win64"
-          $zipPath = Join-Path $env:RUNNER_TEMP "protoc-$env:PROTOBUF_VERSION-win64.zip"
-          Invoke-WebRequest `
-            -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v$env:PROTOBUF_VERSION/protoc-$env:PROTOBUF_VERSION-win64.zip" `
-            -OutFile $zipPath
-          Expand-Archive -Path $zipPath -DestinationPath $protocRoot -Force
+          if (Test-Path -LiteralPath (Join-Path $protocRoot "bin\protoc.exe")) {
+            Write-Host "protoc cache hit: $protocRoot"
+          } else {
+            $zipPath = Join-Path $env:RUNNER_TEMP "protoc-$env:PROTOBUF_VERSION-win64.zip"
+            Invoke-WebRequest `
+              -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v$env:PROTOBUF_VERSION/protoc-$env:PROTOBUF_VERSION-win64.zip" `
+              -OutFile $zipPath
+            Expand-Archive -Path $zipPath -DestinationPath $protocRoot -Force
+          }
           "PROTOBUF_ROOT=$protocRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Cache CMake third-party deps
+        # protobuf/absl FetchContent 编译约 8~10 分钟，是单次构建的大头。
+        # 键钉 PROTOBUF_VERSION：升依赖时手动改键，未命中即回退现编（无风险）。
+        uses: actions/cache@v4
+        with:
+          path: |
+            moqi-im-windows/build-vs32/_deps
+            moqi-im-windows/build-vs64/_deps
+          key: cmake-deps-${{ env.PROTOBUF_VERSION }}-v1
+
+      - name: Cache grammar model
+        uses: actions/cache@v4
+        with:
+          path: moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
+          key: gram-zh-hans-t-essay-bgw-20260712
 
       - name: Build installer
         working-directory: ${{ github.workspace }}/moqi-im-windows
@@ -107,12 +133,16 @@ jobs:
           # 上游 release 固定 tag 下载；大小校验防半截文件。
           $gramDir = Join-Path $env:GITHUB_WORKSPACE "moqi-im-windows\installer\dist"
           $gramPath = Join-Path $gramDir "zh-hans-t-essay-bgw.gram"
-          Invoke-WebRequest `
-            -Uri "https://github.com/lotem/rime-octagram-data/releases/download/20260712/zh-hans-t-essay-bgw.gram" `
-            -OutFile $gramPath
-          $len = (Get-Item -LiteralPath $gramPath).Length
-          if ($len -ne 206396460) {
-            throw "Grammar model size mismatch: got $len, expected 206396460"
+          if ((Test-Path -LiteralPath $gramPath) -and (Get-Item -LiteralPath $gramPath).Length -eq 206396460) {
+            Write-Host "grammar model cache hit"
+          } else {
+            Invoke-WebRequest `
+              -Uri "https://github.com/lotem/rime-octagram-data/releases/download/20260712/zh-hans-t-essay-bgw.gram" `
+              -OutFile $gramPath
+            $len = (Get-Item -LiteralPath $gramPath).Length
+            if ($len -ne 206396460) {
+              throw "Grammar model size mismatch: got $len, expected 206396460"
+            }
           }
 
       - name: Build lite and full installers
