@@ -10,18 +10,21 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 
 核心引擎：[`moqi-ime`](https://github.com/gaboolic/moqi-ime)。使用Go语言实现。
 
-默认输入法：[`白霜拼音`](https://github.com/gaboolic/rime-frost)。
+默认输入法：[`白霜拼音`](https://github.com/gaboolic/rime-frost)——经过[公开评测](https://github.com/gaboolic/rime-schema-compare/blob/main/report/latest.md)，词频准确度在拼音方案中最高的方案，与墨奇输入法同源、深度适配。
 
 > **关于本仓库**：本仓库是墨奇输入法 Windows 版的**深度优化分支**，由 [@jidzhang](https://github.com/jidzhang) 维护。
 > 感谢原作者 [@gaboolic](https://github.com/gaboolic)——墨奇输入法、moqi-ime 引擎与白霜拼音均出自其手，
 > 本分支的所有优化都建立在上游的成果之上。上游原仓库：<https://github.com/gaboolic/moqi-im-windows>。
 
-为什么选择白霜拼音？
+## 为什么用这个版本
 
-1. 白霜拼音经过评测，词频准确度是最高的，超过了商业输入法。[查看rime各方案评测结果](https://github.com/gaboolic/rime-schema-compare/blob/main/report/latest.md)
-2. 白霜拼音作者也是我，有问题改起来方便。
+**混合连打：想打的词一次空格直出。** 打「我要」不用打全 `woyao`，打 `woy` 加空格就是「我要」；打 `shid` 出「是的」而不是「时代」。这是真实打字里最常用也最省力的打法，本分支把它做对了——公平口径命中率从 65.5 提升到 **82.4**（百分制）。
 
-## 快速开始
+**打字跟手。** 每个按键的处理时间从 11.4 毫秒降到 0.73 毫秒，砍掉 94%；装完第一个字就不会卡。
+
+**功能齐全，持续维护。** 继承上游全部功能（整句输入、AI 增强、云同步、换肤……），每项优化都有自动化测评背书，改一处验全套，其它场景零退步才发布。
+
+## 下载安装
 
 从本仓库 [Releases](https://github.com/jidzhang/moqi-im-windows/releases) 下载安装包，三档任选：
 
@@ -31,116 +34,74 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 | `moqi-im-windows-setup.exe`（约 73MB） | 含预编译词库 | 绝大多数用户 |
 | `moqi-im-windows-setup-full.exe`（约 228MB） | 预编译词库 + 大语法模型 | 想要更好的长句效果 |
 
-另有独立的大语法模型 `zh-hans-t-essay-bgw.gram` 可供已装 lite/标准包的用户后补（放进 `%APPDATA%\Moqi\Rime` 即自动启用，无需管理员权限）。详见 [installer/PACKAGES.md](installer/PACKAGES.md)。
+已装 lite/标准包想后补大语法模型？下载 `zh-hans-t-gram.gram` 放进 `%APPDATA%\Moqi\Rime` 即自动启用——不需要管理员权限，升级重装也不会丢。详见 [三档安装包说明](installer/PACKAGES.md)。
 
-## 特色功能
+## 功能一览
 
-- 托盘切换输入法状态：中英文 全半角 简繁
-- 外观编辑：主题皮肤切换、字体调整、主题色切换、自定义快捷键。一般功能都可通过托盘图标右键修改，强烈自定义修改需求可修改C:\Users\用户名\AppData\Roaming\Moqi\appearance_config.json  现在已支持导入皮肤，可选yaml文件
-- 默认使用白霜拼音，支持切换方案集、切换输入方案、更新配置
-- 修改了librime的组句算法，支持输出多条整句候选，正确率大大提升
-- 置顶短语、超级简拼
+**输入与准确率**
+
+- 混合连打：前词全拼 + 后词首字母（`woy`→我要），一次空格直出心里那个词（本分支核心优化，见下文）
+- 整句输入：连打一整句拼音，直接给出多条完整句子候选，不用逐词确认
+- 错字宽容：「哪怕」打成「拿怕」、拼音字母打反（换位），都能出正确的词并标注读音
+- 置顶短语、超级简拼：常用词一两个字母直达
+- 数字直通：中文模式下打 `4.`、`4.5` 直接上屏，不用切英文（组字中数字仍是选词键）
+
+![整句组句](others/imgs/input-zuju.png)
+
+**智能增强**
+
+- 原生 AI：接入大模型后，选中候选按快捷键即可「优化整句」「中译英」「写好评」「问答」，提示词和快捷键都能自定义。安装包已内置默认模板，在 `%APPDATA%\Moqi\Rime\ai_config.json` 填入自己的 `api_key` 即可用（[功能演示](https://github.com/gaboolic/moqi-im-windows/issues/4)）
+- 大语法模型：essay 级语言模型参与组句排序，长句和上下文延续更准；装 full 包或按上文放置模型文件即自动启用
+
+![AI 功能](others/imgs/input-ai.gif)
+
+**个性化与同步**
+
+- 用户词库学习：全拼输入的用词习惯会被记住，越用越顺手
+- WebDAV 同步：设置后跨设备同步用户词库；云剪贴板与 Android 版互通——PC 上复制的内容，手机上按 `Ctrl+0` 直接粘贴上屏（默认关闭，托盘「设置」→「云剪贴板」开启，密码本地加密存储）
+- 外观：主题皮肤、字体、主题色、快捷键都可在托盘菜单调整，支持导入皮肤文件
+
+![外观与方案](others/imgs/caidan-zhuti.png)
+
+**体验细节**
+
+- 候选窗：微软式跟随光标、直角窗口、首候选高亮四边贴满；托盘切换中英文/全半角/简繁
+- 支持切换方案集与输入方案（白霜拼音/音形/五笔整句等），每个应用记住自己的方案，切换应用瞬间就位
 - 输入设置：自动插入成对符号、分号键次选
-- 同步设置：设置WebDAV后，支持跨设备同步用户词库（WebDAV）
-- **云剪贴板（WebDAV）**：与 Android 版互通，默认关闭。在输入法「设置」菜单 →「云剪贴板」中配置 WebDAV 地址与账号；开启后 PC 任意应用复制纯文本会自动上传到 `{墨奇设置目录}/clip/`（默认 `moqi-input-method/clip/`）。按 `Ctrl+0`（可在设置中修改）将云端条目显示为候选列表并上屏。配置保存在 `%APPDATA%\Moqi\cloud_clipboard.json`，密码经 DPAPI 加密存于 `cloud_clipboard.pw`。
-- 原生ai功能：支持整句优化、翻译、问答等，只有想不到没有做不到。编辑C:\Users\用户名\AppData\Roaming\Moqi\Rime\ai_config.json 可以接入ai大模型以及自定义提示词、快捷键。为了方便体验，已在安装包里加了默认配置，可以替换成用户自己的apikey
 
-```
-{
-  "api": {
-    "base_url": "",
-    "api_key": "",
-    "model": ""
-  },
-  "actions": [
-    {
-      "name": "写好评",
-      "hotkey": "Ctrl+Shift+G",
-      "prompt": "请围绕“{{candidate_1}}”生成最多 3 条适合直接发布的中文好评，每条 20 字左右。"
-    },
-    {
-      "name": "优化整句",
-      "hotkey": "Ctrl+Shift+O",
-      "prompt": "上一句是：{{previous_commit}}\n原始输入拼音是：{{composition}}\n前三个候选词：\n{{candidates_top3}}\n请严格遵循原始输入拼音来选字，只能在符合这串拼音的候选范围内优化整句，不要凭空改成不匹配拼音的字词。只输出 1 条最通顺、最自然的整句候选，不要解释。"
-    },
-    {
-      "name": "中译英",
-      "hotkey": "Ctrl+Shift+E",
-      "prompt": "请把当前中文内容翻译成自然、地道的英文。 “{{candidate_1}}” 只输出 1 条英文翻译，不要解释。"
-    },
-    {
-      "name": "问答",
-      "hotkey": "Ctrl+Shift+Q",
-      "prompt": "用户询问： “{{candidate_1}}” 只输出 1 条答案，不要解释。"
-    }
-  ]
-}
-```
+## 我们做了哪些深度优化
 
-## 本分支的深度优化
+以下每项都经过对照实验验证（方法见下节），守卫场景零退步才合入。
 
-本分支在上游基础上做了持续的工程与算法优化，以下均为实测数据（实验记录见各轮评测报告）：
+### 混合连打：一次空格，直出心里那个词
 
-**混合连打：一次空格，直出心里那个词（旗舰改进）**
+混合连打的问题在于一个简写串背后有十几个候选抢位置，出来的经常不是心里那个词：`shid` 想要「是的」出来「时代」，`woy` 想要「我要」出来「我也」。原因是双重的——这些口语搭配大量不在词库里；在词库里的也排不过书面语高频词（「这样」的词频是「这一」的三倍）。我们分四步修通：
 
-真实打字最常用的省力打法是混合连打：打「我要」只打 `woy`，打「是的」只打 `shid`，一次空格上屏。但这也最难——一个简写串背后有十几个候选在抢位置，经常出来的不是心里那个词（`shid` 出「时代」，`woy` 出「我也」）。我们从四个层面把它修通了：
+1. **补词**：从字幕、新闻、TED、小说四类语料挖掘口语高频搭配，缺失的 1938 条补进词库，权重按真实语料频次定档；
+2. **排序**：引入「口语搭配先验」——候选词若是语料中真实出现过的搭配，就提到前面；但只替换语料中毫无踪迹的首选，绝不越权打乱正常排序；
+3. **提交对齐**：排序改了还不够——按空格时引擎默认提交自己的第一名，屏幕显示和实际上屏会不一致。现在空格自动提交屏幕上显示的那个词，所见即所得；
+4. **治理学习**：逐条归因发现简拼提交学到的词会反过来污染之后的候选（净损 37 对）。混合输入不再写入用户词典，全拼输入的个性化学习原样保留。
 
-- **补词**：口语高频词对（是的/我要/的时候……）大量缺失，从字幕、新闻、TED、小说四类语料挖出 1938 条补进词库，权重按语料频次定档；
-- **排序**：词在库里还要排得靠前。引入"口语词对先验"：候选词若是语料中真实出现过的搭配，就提到前面——但只替换语料中毫无踪迹的首选，绝不越权打乱正常排序；
-- **提交**：排序改了还不够，按空格时引擎仍会提交自己的第一名，屏幕上看着是「是的」、打出来是「时代」。现在空格自动提交屏幕显示的那个词，所见即所得；
-- **治学习**：简拼提交会把学到的词写进用户词典，反过来污染之后的候选。混合输入不再写入用户词典，全拼输入的个性化学习原样保留。
+**效果**：公平口径命中率 65.5 → **82.4**；原始口径 54.9 → 67.8。六个场景全部持平或更优。
 
-效果：混合连打从 54.9 分提升到 **67.8 分**（公平口径 64.3 → **81.6**），全部其它场景零退步。
+### 其余优化一览
 
-**性能**
+| 方面 | 成果 |
+|---|---|
+| 按键延迟 | 11.4ms → 0.73ms/键（-94%）；首次输入卡顿消除 |
+| 整句质量 | 大语法模型接入与全套调优，整句 +1.4 |
+| 错字宽容 | 换位类错字命中率 23% → 52% |
+| 英文干扰 | 中文可解析的输入不再被英文词抢首选（der→的人） |
+| 显示修复 | 记事本组字下划线被候选窗遮挡（所有 Windows 版本） |
+| 安装体验 | 三档安装包；语法模型放用户目录自动启用；GitHub Actions 全自动发版 |
 
-- 按键延迟：从每键 4 次 RPC 轮询的 ≈11.4ms 降到 DLL 事件驱动读 ≈0.73ms/键、后端 0.40ms/键
-- 首次输入卡顿消除：修复 librime schema 循环依赖 + 启动即预热后端
+## 这些数字怎么来的
 
-**准确率**
+上面所有数字来自一套固定的自动化测评：六个真实打字场景（两词、三词、混合连打、单字母延续、整句、简拼）× 三种配置 × 两条链路共 40 组，每组全新用户目录；词料是真实语料挖掘的 2000 个高频搭配和 3466 条整句。规矩只有一条：目标场景必须提升，其它场景一分不能掉。完整实验记录在 [moqi-ime 评测报告](https://github.com/jidzhang/moqi-ime/blob/main/report/2026-10-16-baseline.md)。
 
-- 换位容错层：换位类错字 top-1 23.4% → 51.6%（音节图换位边 + 门控，守卫维度零回归）
-- essay-bgw 大语法模型接入与全套调优：整句场景 +1.5，混合连打组句 +2.4
-- 英文降位：中文可解析的输入不再被英文词劫持（配对 A/B +0.33）
+## 开发者专区
 
-**输入体验**
-
-- 数字/小数点直通：`4.`、`4.5` 直接上屏（对齐微软拼音），组字中数字仍用于选候选
-- 候选窗：微软式锚定与同屏、直角窗口、首候选高亮四边贴边
-- 修复记事本等宿主组字虚线被候选窗遮挡的问题（CUAS 组字浮窗精确锚定）
-
-**安装与发布**
-
-- 三档安装包：lite / 标准 / full（含大语法模型），按需选择
-- 大语法模型免管理员放置：放进 `%APPDATA%\Moqi\Rime` 即自动启用，升级重装不丢
-- GitHub Actions 三档自动发版，语法模型从官方上游 release 固定下载
-
-**以上改动怎么验证的？** 我们维护了一套固定的自动化测评：六个真实打字场景（两词、三词、混合连打、延续、整句、简拼）× 三种配置 × 两条链路，共 40 格，每格都用全新的用户目录，词料是真实语料挖出的 2000 个高频词对和 3466 条整句。任何改动都要过这套测评：目标场景必须提升，其它场景一分不能掉。文中的数字全部来自这套测评，实验明细在 [moqi-ime 评测报告](https://github.com/jidzhang/moqi-ime/blob/main/report/2026-10-16-baseline.md)。
-
-## 功能演示
-
-ai功能演示：<https://github.com/gaboolic/moqi-im-windows/issues/4>
-![输入0-ai](others/imgs/input-ai.gif)
-![输入1-ai](others/imgs/input-zise.png)
-
-外观配置、切换方案
-![菜单主题](others/imgs/caidan-zhuti.png)
-![菜单方案集](others/imgs/caidan-schemas.png)
-![菜单方案](others/imgs/caidan-schema.png)
-
-同步设置
-![同步设置](others/imgs/caidan-tongbu.png)
-![webdav](others/imgs/caidan-webdav.png)
-
-多整句、句中任意辅助码演示
-![输入整句组句](others/imgs/input-zuju.png)
-![输入4-句中辅助码](others/imgs/input-liuxingyusamantianji.gif)
-
-一些输入效果
-![输入2](others/imgs/input-mo.png)
-![输入3](others/imgs/input-qi.png)
-
-## 运行架构
+**运行架构**
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -164,62 +125,12 @@ ai功能演示：<https://github.com/gaboolic/moqi-im-windows/issues/4>
 └─────────────────────────────────────────────┘
 ```
 
-当前默认部署中，`backends.json` 指向 `moqi-ime\server.exe`；Windows 侧通过本地命名管道连到 `MoqLauncher`，`MoqLauncher` 再把请求按行写入后端的标准输入，并从标准输出读取响应。
+本仓库不实现拼音解析、候选生成等核心逻辑（由 `moqi-ime` 提供），负责 TSF 生命周期、按键转发、候选窗 UI 与后端接入，两仓配套部署。
 
-## 核心职责
-
-- **TSF 文本服务**：实现 `ITfTextInputProcessor`、`ITfKeyEventSink` 等接口
-- **Windows UI**：管理候选窗口、消息窗口、语言栏按钮和 preserved keys
-- **协议转换**：把按键与状态序列化为 JSON 请求，并应用后端返回的组合串、候选和提交文本
-- **后端接入**：通过 `MoqLauncher` 读取 `backends.json`，按语言配置 GUID 路由到对应后端
-
-## 与 `moqi-ime` 的关系
-
-本仓库不实现拼音解析、候选生成、词库管理等输入法核心逻辑，这些能力由 `moqi-ime` 提供。
-
-Windows 侧的职责主要是：
-
-- 把 TSF 生命周期和按键事件转发给后端
-- 根据后端返回结果更新候选窗、组合串和状态
-- 从已安装后端目录扫描 `input_methods/*/ime.json`，为语言配置提供元数据与配置入口
-
-因此，`moqi-im-windows` 与 `moqi-ime` 需要配套部署。
-
-## 技术栈
-
-- **语言**：C++ 、GO
-- **框架**：Microsoft TSF、Win32 API
-- **进程/IO**：命名管道、子进程 `stdin/stdout` 转发、`libuv`
-- **数据格式**：protobuf(见/proto/moqi.proto)
-- **日志**：`spdlog`
-- **构建**：CMake + Visual Studio 2022 / MSBuild
-
-## 源码布局
-
-- `MoqiTextService`：TSF 文本服务，产出 `MoqiTextService.dll`
-- `MoqLauncher`：后端启动器与消息转发器，产出 `MoqiLauncher.exe`
-- `libIME2`：IME/TSF 基础库，也是本项目 TSF 层的核心依赖，来源：[`gaboolic/libIME2`](https://github.com/gaboolic/libIME2)
-- `libuv`：Launcher 的事件循环与进程/管道依赖
-- `backends.json`：后端清单，定义后端名称、启动命令和工作目录
-- `scripts`：构建脚本
-- `installer/`：Inno Setup 安装器脚本与输出目录
-
-## 构建
-
-前置：**Visual Studio 2022**、**CMake 3.21+**、Windows SDK。
-
-在本仓库根目录执行：
-
-   `powershell -ExecutionPolicy Bypass -File .\scripts\_all_in_package.ps1`
-
-该脚本会生成安装器：`installer\dist\moqi-im-windows-setup.exe`
-
-## 参考文档
-
-- [Microsoft TSF 文档](https://docs.microsoft.com/en-us/windows/win32/tsf/text-services-framework)
-- [ITfTextInputProcessor 接口](https://docs.microsoft.com/en-us/windows/win32/api/msctf/nn-msctf-itftextinputprocessor)
-- [PIME](https://github.com/EasyIME/PIME)
-- [小狼毫](https://github.com/rime/weasel)
+- **技术栈**：C++ / Go、Microsoft TSF、Win32 API、命名管道 + libuv、protobuf、spdlog、CMake + Visual Studio 2022
+- **源码布局**：`MoqiTextService`（TSF 文本服务/DLL）、`MoqLauncher`（后端启动器）、`libIME2`（TSF 基础库）、`installer/`（Inno Setup 安装器）、`scripts/`（构建脚本）
+- **构建**：装好 Visual Studio 2022、CMake 3.21+、Windows SDK 后，根目录执行 `powershell -ExecutionPolicy Bypass -File .\scripts\_all_in_package.ps1`
+- **参考**：[Microsoft TSF 文档](https://docs.microsoft.com/en-us/windows/win32/tsf/text-services-framework) · [PIME](https://github.com/EasyIME/PIME) · [小狼毫](https://github.com/rime/weasel)
 
 ## 致谢
 
@@ -250,4 +161,4 @@ Windows 侧的职责主要是：
 
 ### Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=gaboolic/moqi-im-windows&type=Date)](https://star-history.com/#gaboolic/moqi-im-windows&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=jidzhang/moqi-im-windows&type=Date)](https://star-history.com/#jidzhang/moqi-im-windows&Date)
