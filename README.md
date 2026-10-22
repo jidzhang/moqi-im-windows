@@ -161,7 +161,7 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
   <img src="others/imgs/wx-zanshang.jpg" width="280" alt="微信赞赏码">
 </p>
 
+- 也可以在手机微信里打开[这篇介绍文章](https://mp.weixin.qq.com/s/Kb9NoCpAo2MkKuJubmWYww)，在文末点「喜欢作者」
 - 捐赠完全自愿，不承诺任何回报；款项用于支持 **Windows 移植版的维护与优化**
-- 习惯包月/固定金额的话也可以走[爱发电](https://afdian.com/a/dc99tech)
 - 本项目基于原作者 [gaboolic](https://github.com/gaboolic) 的开源成果；如想支持上游开发，请访问[上游仓库](https://github.com/gaboolic/moqi-im-windows)
 - 以上为本仓库官方捐赠渠道，谨防冒用
