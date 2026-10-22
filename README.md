@@ -50,7 +50,12 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 
 **智能增强**
 
-- 原生 AI：接入大模型后，选中候选按快捷键即可「优化整句」「中译英」「写好评」「问答」，提示词和快捷键都能自定义。安装包已内置默认模板，在 `%APPDATA%\Moqi\Rime\ai_config.json` 填入自己的 `api_key` 即可用（[功能演示](https://github.com/gaboolic/moqi-im-windows/issues/4)）
+- 原生 AI：接入大模型后，选中候选按快捷键即可「写好评」「优化整句」「中译英」「问答」「润色」，提示词和快捷键都能自定义（[功能演示](https://github.com/gaboolic/moqi-im-windows/issues/4)）
+- **AI 默认关闭、绝不联网**；想启用（约 1 分钟）：
+  1. 打开配置文件 `%APPDATA%\Moqi\ai_config.json`（若不存在，则编辑安装目录下的 `moqi-ime\input_methods\rime\ai_config.json`，首次启动会自动复制一份到上面位置）
+  2. 把键名 `"base_url删掉我即可用AI功能"` 改成 `"base_url"`（冒号后面的网址不用动）
+  3. 在 `"api_key"` 里填入你自己的 key；也支持任意 OpenAI 兼容接口——改 `base_url` 和 `model` 即可指向私有部署
+  4. 托盘菜单 →「重启墨奇引擎」生效
 - 大语法模型：essay 级语言模型参与组句排序，长句和上下文延续更准；装 full 包或按上文放置模型文件即自动启用
 
 ![AI 功能](others/imgs/input-ai.gif)
