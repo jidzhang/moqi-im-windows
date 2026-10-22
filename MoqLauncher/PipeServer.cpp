@@ -152,7 +152,12 @@ void PipeServer::loadConfig() {
 
 void PipeServer::saveConfig(bool traceEnabled) {
   auto configFile = dataDirPath_ + CONFIG_FILE_REL_PATH;
+  // 先读回现有内容再改 logLevel：整份覆盖会把用户手写的键（例如
+  // "usageLog": true 这类本地分析开关）静默抹掉。
   Json::Value config;
+  if (!loadJsonFile(configFile, config) || !config.isObject()) {
+    config = Json::Value(Json::objectValue);
+  }
   // 写 "trace" 而不是内部日志档：前端（TSF DLL）读同一个文件、且只有
   // "trace" 才输出埋点日志；启动器自己的 spdlog 档位已在内存里夹到 debug。
   config["logLevel"] = traceEnabled ? "trace" : "error";
