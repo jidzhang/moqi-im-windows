@@ -850,8 +850,16 @@ void CandidateWindow::paintItem(HDC hdc, int index, int x, int y) {
         ::GetClientRect(hwnd_, &clientRc);
 
         if (candPerRow_ == 1) {
-            highlightRc.left = borderWidth_ + padX_;
-            highlightRc.right = clientRc.right - borderWidth_ - padX_;
+            // 单列（竖排）：背景横向铺满整行、直达窗口内缘（两侧不再留 padX_ 空隙）；
+            // 纵向铺到与相邻候选的间距中点，首行/末行仍贴窗口边缘。
+            highlightRc.left = borderWidth_;
+            highlightRc.right = clientRc.right - borderWidth_;
+            if (row > 0) {
+                highlightRc.top = itemRc.top - rowSpacing_ / 2;
+            }
+            if (index + 1 < static_cast<int>(items_.size())) {
+                highlightRc.bottom = itemRc.bottom + rowSpacing_ / 2;
+            }
         } else {
             // 微软拼音风格：行首选中项的背景贴到窗口左边缘；与右侧候选之间
             // 只铺到间距中点，避免背景紧贴下一个候选的序号。
