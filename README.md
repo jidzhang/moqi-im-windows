@@ -141,16 +141,6 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 - [小狼毫 weasel](https://github.com/rime/weasel)、[PIME](https://github.com/EasyIME/PIME)、[libIME2](https://github.com/EasyIME/libIME2)：Windows TSF 实现的参考与基础库
 - [lotem/rime-octagram-data](https://github.com/lotem/rime-octagram-data)：官方语法模型（essay-bgw）
 
-## 赞助支持
-
-如果墨奇输入法 Windows 版帮到了你，欢迎支持本分支的持续维护：
-
-- 爱发电：<https://afdian.com/a/dc99tech>
-
-- 捐赠完全自愿，不承诺任何回报；款项用于支持 **Windows 移植版的维护与优化**
-- 本项目基于原作者 [gaboolic](https://github.com/gaboolic) 的开源成果；如想支持上游开发，请访问[上游仓库](https://github.com/gaboolic/moqi-im-windows)
-- 以上为本仓库唯一官方捐赠渠道，谨防冒用
-
 ## 友情链接
 
 白霜拼音 <https://github.com/gaboolic/rime-frost>
@@ -162,3 +152,16 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 ### Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=jidzhang/moqi-im-windows&type=Date)](https://star-history.com/#jidzhang/moqi-im-windows&Date)
+
+## 赞赏支持
+
+如果墨奇输入法帮到了你，欢迎请作者喝杯咖啡——**金额随意，一分也是心意**。微信扫描（或长按识别）下方二维码即可：
+
+<p align="center">
+  <img src="others/imgs/wx-zanshang.jpg" width="280" alt="微信赞赏码">
+</p>
+
+- 捐赠完全自愿，不承诺任何回报；款项用于支持 **Windows 移植版的维护与优化**
+- 习惯包月/固定金额的话也可以走[爱发电](https://afdian.com/a/dc99tech)
+- 本项目基于原作者 [gaboolic](https://github.com/gaboolic) 的开源成果；如想支持上游开发，请访问[上游仓库](https://github.com/gaboolic/moqi-im-windows)
+- 以上为本仓库官方捐赠渠道，谨防冒用
