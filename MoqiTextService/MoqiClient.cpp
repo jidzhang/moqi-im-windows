@@ -46,6 +46,11 @@ namespace Moqi {
 
 static constexpr UINT ASYNC_RPC_POLL_INTERVAL_MS = 50;
 static constexpr int FIRST_PRINTABLE_KEY_RPC_WAIT_MS = 200;
+// bug#13（2026-10-23）：应用激活后的首个可打印键若撞上激活/建连窗口，
+// 旧的 200ms 超时会把键静默吃掉（"第一个字母丢失"）。激活路径本身有
+// ~1s 的预算（见 Client::onActivate 的 ACTIVATION_CONNECT_ATTEMPTS），
+// 首键等待与之对齐：宁可顿一下，也不丢字（对齐搜狗/微软拼音的行为）。
+static constexpr int FIRST_PRINTABLE_KEY_ACTIVATION_WAIT_MS = 1500;
 static constexpr DWORD RPC_BUSY_POLL_INTERVAL_MS = 5;
 // Timeout for writing one request into the pipe. The 64KB pipe buffer accepts
 // a request immediately unless the backend is completely stuck, so this only
@@ -1039,14 +1044,43 @@ void Client::onDeactivate() {
   isActivated_ = false;
 }
 
+bool Client::waitForRpcIdleForFirstKey() const {
+  // 首键专用等待：普通 RPC 忙等 200ms；一旦看到激活/建连进行中，
+  // 放宽到激活预算（FIRST_PRINTABLE_KEY_ACTIVATION_WAIT_MS）。
+  const ULONGLONG start = ::GetTickCount64();
+  ULONGLONG deadline = start + static_cast<ULONGLONG>(FIRST_PRINTABLE_KEY_RPC_WAIT_MS);
+  for (;;) {
+    const bool activation =
+        activationInProgress_.load(std::memory_order_acquire);
+    if (activation) {
+      deadline =
+          start + static_cast<ULONGLONG>(FIRST_PRINTABLE_KEY_ACTIVATION_WAIT_MS);
+    }
+    if (!activation && rpcInProgress_.load(std::memory_order_acquire) == 0) {
+      return true;
+    }
+    const ULONGLONG now = ::GetTickCount64();
+    if (now >= deadline) {
+      return false;
+    }
+    const DWORD sleepMs = static_cast<DWORD>(
+        (std::min)(static_cast<ULONGLONG>(RPC_BUSY_POLL_INTERVAL_MS),
+                   deadline - now));
+    ::Sleep(sleepMs == 0 ? 1 : sleepMs);
+  }
+}
+
 bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   if (isOrdinaryPrintableKey(keyEvent) &&
-      !waitForRpcIdle(FIRST_PRINTABLE_KEY_RPC_WAIT_MS)) {
+      !waitForRpcIdleForFirstKey()) {
     std::wostringstream log;
     log << L"[filterKeyDown] RPC busy timeout; consume printable key"
         << L" vk=" << keyEvent.keyCode()
         << L" char=" << keyEvent.charCode()
-        << L" wait_ms=" << FIRST_PRINTABLE_KEY_RPC_WAIT_MS
+        << L" waited_ms="
+        << (activationInProgress_.load(std::memory_order_acquire)
+                ? FIRST_PRINTABLE_KEY_ACTIVATION_WAIT_MS
+                : FIRST_PRINTABLE_KEY_RPC_WAIT_MS)
         << L" activation_in_progress="
         << (activationInProgress_.load(std::memory_order_acquire) ? L"true" : L"false")
         << L" rpc_in_progress="

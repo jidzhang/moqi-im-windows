@@ -105,6 +105,7 @@ private:
     bool writePipeMessageWithTimeout(HANDLE pipe, const char* data, size_t len, DWORD timeoutMs);
     bool readPipeMessageWithTimeout(HANDLE pipe, std::string& message, DWORD timeoutMs, bool* timedOut = nullptr);
 	bool waitForRpcIdle(int timeoutMs) const;
+	bool waitForRpcIdleForFirstKey() const;
 	bool readPendingPipeMessage(std::string& serializedReply);
 	void refreshAsyncPollTimer();
 	void pollAsyncResponses();
