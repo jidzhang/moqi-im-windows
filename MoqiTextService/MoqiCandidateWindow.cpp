@@ -230,7 +230,7 @@ CandidateWindow::CandidateWindow(Ime::TextService* service, Ime::EditSession* se
       textWidth_(0),
       commentWidth_(0),
       itemHeight_(0),
-      candPerRow_(1),
+      candPerRow_(9),
       candSpacing_(kDefaultCandidateSpacing),
       colSpacing_(0),
       rowSpacing_(0),
@@ -753,6 +753,13 @@ LRESULT CandidateWindow::wndProc(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_DPICHANGED:
+        // per-monitor 宿主里跨屏时按新 DPI 重建字体并重排（含建议矩形的重定位
+        // 交给下一次锚点计算，这里只保证尺寸/字号正确）。
+        if (auto* moqiService = static_cast<Moqi::TextService*>(textService_)) {
+            moqiService->onCandidateWindowDpiChanged();
+        }
+        return 0;
     default:
         return Window::wndProc(msg, wp, lp);
     }

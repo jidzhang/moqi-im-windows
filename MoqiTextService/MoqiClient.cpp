@@ -224,49 +224,6 @@ bool shouldAutoPairSymbol(const std::wstring &commitString,
   return false;
 }
 
-void sendDelayedLeftArrow(HWND targetWindow) {
-  if (targetWindow == nullptr) {
-    appendQuotePairLog(L"[caretMove] skipped target_window=null");
-    return;
-  }
-
-  std::thread([targetWindow]() {
-    constexpr int kInitialDelayMs = 25;
-    constexpr int kModifierPollDelayMs = 5;
-    constexpr int kModifierPollCount = 40;
-
-    ::Sleep(kInitialDelayMs);
-    for (int i = 0; i < kModifierPollCount; ++i) {
-      HWND foreground = ::GetForegroundWindow();
-      if (foreground != targetWindow) {
-        appendQuotePairLog(L"[caretMove] skipped foreground_changed");
-        return;
-      }
-      const bool shiftDown =
-          (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 ||
-          (::GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
-          (::GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
-      if (!shiftDown) {
-        break;
-      }
-      ::Sleep(kModifierPollDelayMs);
-    }
-
-    INPUT inputs[2] = {};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = VK_LEFT;
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = VK_LEFT;
-    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-
-    const UINT sent = ::SendInput(2, inputs, sizeof(INPUT));
-    if (sent == 2) {
-      appendQuotePairLog(L"[caretMove] sent VK_LEFT");
-    } else {
-      appendQuotePairLog(L"[caretMove] SendInput failed");
-    }
-  }).detach();
-}
 
 } // namespace
 
@@ -718,15 +675,21 @@ void Client::updateCommitString(Json::Value &msg, Ime::EditSession *session,
                          formatCodePoints(commitString));
     }
     if (!commitString.empty()) {
-      HWND targetWindow = ::GetForegroundWindow();
-      if (!textService_->isComposing()) {
-        textService_->startComposition(session->context());
+      // 上屏走"清空组字 + 普通插入"（weasel#107 模式）：组字带文本定稿会被
+      // XAML 宿主（便笺）整段重新选中（2026-10-23 用户实测，14 个输入法仅墨奇
+      // 触发）；组字清空后结束，最终文本用 InsertTextAtSelection 插入并显式
+      // 设置插入点，应用没有"组字定稿"事件可挑。自动配对符号的光标位置直接
+      // 由插入时的 caretFromEnd 指定，不再需要延迟左方向键。
+      if (textService_->isComposing()) {
+        if (suppressTerminationNotification) {
+          textService_->suppressNextCompositionTerminatedNotification();
+        }
+        textService_->endComposition(session->context(), /*clearText=*/true);
       }
-      textService_->setCompositionString(session, commitString.c_str(),
-                                         commitString.length());
-      if (autoPairedSymbols) {
-        textService_->setCompositionCursor(session, 1);
-      }
+      textService_->insertTextAtSelection(
+          session->context(), commitString.c_str(),
+          static_cast<int>(commitString.length()),
+          autoPairedSymbols ? 1 : 0);
       // FIXME: update the position of candidate and message window when the
       // composition string is changed.
       if (textService_->hasCandidateWindow()) {
@@ -734,13 +697,6 @@ void Client::updateCommitString(Json::Value &msg, Ime::EditSession *session,
       }
       if (textService_->messageWindow_ != nullptr) {
         textService_->updateMessageWindow(session);
-      }
-      if (suppressTerminationNotification) {
-        textService_->suppressNextCompositionTerminatedNotification();
-      }
-      textService_->endComposition(session->context());
-      if (autoPairedSymbols) {
-        sendDelayedLeftArrow(targetWindow);
       }
     }
   }

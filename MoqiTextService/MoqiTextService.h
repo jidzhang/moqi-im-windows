@@ -156,6 +156,10 @@ public:
 		applyCandidateAppearanceNow();
 	}
 
+	// 候选窗所在显示器 DPI 变化（跨屏/WM_DPICHANGED）时重建字体并重排。
+	void checkCandidateWindowDpiChanged();
+	void onCandidateWindowDpiChanged();
+
 	COLORREF candBackgroundColor() const {
 		return candBackgroundColor_;
 	}
@@ -330,8 +334,8 @@ private:
 	void createCandidateWindow(Ime::EditSession* session);
 	void destroyCandidateWindow();
 	bool ensureCandidateWindowValid(const wchar_t* reason);
-	int candFontHeight();
-	int candCommentFontHeight();
+	int candFontHeight(HWND forWindow = nullptr);
+	int candCommentFontHeight(HWND forWindow = nullptr);
 	void applyCandidateAppearanceNow();
 	void refreshCandidateAppearance();
 	void applyUiLessOverrideState();
@@ -371,6 +375,7 @@ private:
 	HFONT font_;
 	HFONT commentFont_;
 	bool updateFont_;
+	UINT appliedCandidateDpi_;
 	int candPerRow_;
 	int candSpacing_;
 	std::wstring selKeys_;

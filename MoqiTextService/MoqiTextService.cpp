@@ -410,13 +410,14 @@ TextService::TextService(ImeModule* module):
 	lastCandidateWindowPos_{0, 0},
 	lastCandidateWindowMoveTick_(0),
 	updateFont_(false),
-	candPerRow_(1),
+	appliedCandidateDpi_(0),
+	candPerRow_(9),
 	candSpacing_(20),
 	selKeys_(L"1234567890"),
 	candUseCursor_(true),
 	candCommentFontName_(kDefaultCommentFontFace),
-	candFontSize_(16),
-	candCommentFontSize_(14),
+	candFontSize_(14),
+	candCommentFontSize_(12),
 	candBackgroundColor_(RGB(255, 255, 255)),
 	candHighlightColor_(RGB(198, 221, 249)),
 	candTextColor_(RGB(0, 0, 0)),
@@ -1167,6 +1168,7 @@ bool TextService::moveCandidateWindowToInputRect(Ime::EditSession* session, cons
 
 	clampCandidateWindowAnchor(candidateWindow_->hwnd(), textRect, &nextPos);
 	candidateWindow_->move(nextPos.x, nextPos.y);
+	checkCandidateWindowDpiChanged();
 	hasLastCandidateWindowPos_ = true;
 	lastCandidateWindowPos_ = nextPos;
 	lastCandidateWindowMoveTick_ = now;
@@ -1201,6 +1203,7 @@ void TextService::showCandidates(Ime::EditSession* session) {
 	createCandidateWindow(session);
 	if (candidateWindow_) {
 		candidateWindow_->syncOwner(session);
+		checkCandidateWindowDpiChanged();
 		candidateWindow_->Show(shouldShowCandidateWindowUI_ ? TRUE : FALSE);
 	}
 	showingCandidates_ = true;
@@ -1272,6 +1275,20 @@ void TextService::checkCandidateFocus() {
 	}
 	const DWORD foregroundThread = ::GetWindowThreadProcessId(foreground, nullptr);
 	if (foregroundThread == ::GetCurrentThreadId()) {
+		return;
+	}
+	// UWP 宿主（便笺等）顶层窗口在 ApplicationFrameHost 的兄弟线程甚至兄弟
+	// 进程里，组字线程里 GetForegroundWindow() 永远不是本线程——只看线程会把
+	// 候选窗在每次显示后 ~30ms 内误杀（用户实报"候选窗口一闪而过"）。前台仍
+	// 在本进程内（窗口间切换）交给 TSF 的 onKillThreadFocus 兜底；UWP 内容
+	// 进程则以本线程仍持有键盘焦点（GetFocus）为准——用户切走应用时焦点
+	// 必然离开本线程，那时再隐藏。
+	DWORD foregroundPid = 0;
+	::GetWindowThreadProcessId(foreground, &foregroundPid);
+	if (foregroundPid == ::GetCurrentProcessId()) {
+		return;
+	}
+	if (::GetFocus() != nullptr) {
 		return;
 	}
 	std::wostringstream log;
@@ -1364,7 +1381,32 @@ void CALLBACK TextService::onMessageTimeout(HWND hwnd, UINT msg, UINT_PTR id, DW
 void TextService::updateLangButtons() {
 }
 
-int TextService::candFontHeight() {
+// Win10 1607+ 才有 GetDpiForWindow；取不到（老系统/窗口为空）返回 0，
+// 调用方退回主屏 DC 口径（与旧行为一致）。多屏 DPI 不同时，per-monitor
+// 宿主里这里返回候选窗所在显示器的 DPI，字号随屏缩放。
+static UINT candidateWindowDpi(HWND hwnd) {
+	if (hwnd == nullptr) {
+		return 0;
+	}
+	using GetDpiForWindowFunc = UINT(WINAPI*)(HWND);
+	static GetDpiForWindowFunc getDpiForWindow = []() -> GetDpiForWindowFunc {
+		HMODULE user32 = ::GetModuleHandleW(L"user32.dll");
+		return user32 != nullptr
+			? reinterpret_cast<GetDpiForWindowFunc>(
+				reinterpret_cast<void*>(::GetProcAddress(user32, "GetDpiForWindow")))
+			: nullptr;
+	}();
+	if (getDpiForWindow != nullptr) {
+		return getDpiForWindow(hwnd);
+	}
+	return 0;
+}
+
+int TextService::candFontHeight(HWND forWindow) {
+	const UINT dpi = candidateWindowDpi(forWindow);
+	if (dpi != 0) {
+		return -MulDiv(candFontSize_, dpi, 72);
+	}
 	int candFontHeight_ = -candFontSize_;
 	HDC hdc = GetDC(NULL);
 	if (hdc)
@@ -1375,7 +1417,11 @@ int TextService::candFontHeight() {
 	return candFontHeight_;
 }
 
-int TextService::candCommentFontHeight() {
+int TextService::candCommentFontHeight(HWND forWindow) {
+	const UINT dpi = candidateWindowDpi(forWindow);
+	if (dpi != 0) {
+		return -MulDiv(candCommentFontSize_, dpi, 72);
+	}
 	int candFontHeight_ = -candCommentFontSize_;
 	HDC hdc = GetDC(NULL);
 	if (hdc)
@@ -1407,14 +1453,14 @@ void TextService::applyCandidateAppearanceNow() {
 		commentFont_ = nullptr;
 	}
 
-	lf.lfHeight = candFontHeight();
+	lf.lfHeight = candFontHeight(candidateWindow_ ? candidateWindow_->hwnd() : nullptr);
 	lf.lfWeight = FW_NORMAL;
 	if (!candFontName_.empty()) {
 		wcsncpy_s(lf.lfFaceName, _countof(lf.lfFaceName), candFontName_.c_str(), _TRUNCATE);
 	}
 	font_ = CreateFontIndirect(&lf);
 
-	lf.lfHeight = candCommentFontHeight();
+	lf.lfHeight = candCommentFontHeight(candidateWindow_ ? candidateWindow_->hwnd() : nullptr);
 	const std::wstring& commentFontName =
 		candCommentFontName_.empty() ? std::wstring(kDefaultCommentFontFace) : candCommentFontName_;
 	wcsncpy_s(lf.lfFaceName, _countof(lf.lfFaceName), commentFontName.c_str(), _TRUNCATE);
@@ -1429,6 +1475,30 @@ void TextService::applyCandidateAppearanceNow() {
 		candidateWindow_->setCommentFont(commentFont_);
 	}
 	refreshCandidateAppearance();
+}
+
+// 候选窗跨屏（多显示器 DPI 不同）时按所在显示器 DPI 重建字体并重算窗口尺寸。
+// per-monitor 宿主里 WM_DPICHANGED / 每次移动后会到这里；非 per-monitor 宿主
+// GetDpiForWindow 恒为进程口径，不会触发重建。
+void TextService::checkCandidateWindowDpiChanged() {
+	if (!candidateWindow_) {
+		return;
+	}
+	const UINT dpi = candidateWindowDpi(candidateWindow_->hwnd());
+	if (dpi == 0 || dpi == appliedCandidateDpi_) {
+		return;
+	}
+	appliedCandidateDpi_ = dpi;
+	updateFont_ = true;
+	applyCandidateAppearanceNow();
+	std::wostringstream log;
+	log << L"[TextService::checkCandidateWindowDpiChanged] dpi=" << dpi;
+	appendCandidateWindowLog(log.str());
+}
+
+void TextService::onCandidateWindowDpiChanged() {
+	appliedCandidateDpi_ = 0;
+	checkCandidateWindowDpiChanged();
 }
 
 void TextService::refreshCandidateAppearance() {
