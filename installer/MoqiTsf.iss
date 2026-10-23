@@ -42,7 +42,10 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-CloseApplications=yes
+; C4（台账，2026-10-23 修）：CloseApplications=no 会在结尾弹"关闭应用"交互页
+; （VERYSILENT 下也弹，用户实报"点确定才关"）。产品在 ssInstall 已自行
+; StopMoqiProcesses，无需 Inno 再介入关应用。
+CloseApplications=no
 RestartApplications=no
 WizardStyle=modern
 OutputDir=dist
@@ -77,7 +80,8 @@ Name: "{autoprograms}\{#MyAppName}\Uninstall"; Filename: "{uninstallexe}"
 Name: "{autoprograms}\{#MyAppName}\Logs"; Filename: "{win}\explorer.exe"; Parameters: """{localappdata}\MoqiIM\Log"""
 
 [Run]
-Filename: "{app}\MoqiLauncher.exe"; Flags: nowait; Check: ShouldLaunchLauncher
+; 启动器拉起已挪到 [Code] ssPostInstall 尾部（静默模式下 [Run] 的 Check
+; 先于 ssPostInstall 评估，读不到标志；见 14-交接 §十四）。此段留空。
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
@@ -141,12 +145,13 @@ procedure TryKillBackendServers;
 var
   R: Integer;
 begin
-  // 后端 server.exe 在启动器已退出时是孤儿进程，不在其进程树里；
-  // 留着它会继续用旧代码/旧数据服务客户端，且锁住 exe 使覆盖安装写不进新文件。
-  // 按路径过滤只杀本安装目录下的 server.exe，避免误杀其他软件的同名进程。
+  // 后端（v1.5.0 起叫 MoqiIME.exe，旧版叫 server.exe）在启动器已退出时是
+  // 孤儿进程，不在其进程树里；留着它会继续用旧代码/旧数据服务客户端，
+  // 且锁住 exe 使覆盖安装写不进新文件。
+  // 按路径过滤只杀本安装目录下的后端，避免误杀其他软件的同名进程。
   Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     '-NoProfile -ExecutionPolicy Bypass -Command "' +
-    'Get-Process server -ErrorAction SilentlyContinue |' +
+    'Get-Process MoqiIME,server -ErrorAction SilentlyContinue |' +
     ' Where-Object { $_.Path -like ''' + ExpandConstant('{app}') + '\*'' } |' +
     ' Stop-Process -Force"',
     '', SW_HIDE, ewWaitUntilTerminated, R);
@@ -234,17 +239,29 @@ begin
     if (ResultCode <> SetupHelperExitSuccess) and
        (ResultCode <> SetupHelperExitRestartRequired) then
       HandleSetupHelperResult('SetupHelper install', ResultCode);
+
+    // 装完直接拉起启动器（2026-10-24 定案）。不能走 [Run]+Check：
+    // 静默模式下 Inno 先评估 [Run] 的 Check、后触发 ssPostInstall，
+    // Check 读到的标志永远还是初始 False（实测 /LOG 时序，14-交接 §十四）。
+    // 需重启场景不拉起（重启后登录任务/Run 键会拉）。
+    if HelperInstallSucceeded and (not HelperInstallNeedsRestart) then
+    begin
+      if not Exec(ExpandConstant('{app}\MoqiLauncher.exe'), '',
+                  ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ResultCode) then
+        Log('Launch MoqiLauncher failed, code ' + IntToStr(ResultCode))
+      else
+        Log('Launched MoqiLauncher after install');
+    end
+    else
+      Log('Skip launching MoqiLauncher: succeeded=' +
+        IntToStr(Ord(HelperInstallSucceeded)) + ' needsRestart=' +
+        IntToStr(Ord(HelperInstallNeedsRestart)));
   end;
 end;
 
 function NeedRestart(): Boolean;
 begin
   Result := HelperInstallNeedsRestart;
-end;
-
-function ShouldLaunchLauncher(): Boolean;
-begin
-  Result := HelperInstallSucceeded and (not HelperInstallNeedsRestart);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
