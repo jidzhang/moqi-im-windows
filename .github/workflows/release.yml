@@ -150,14 +150,24 @@ jobs:
         run: |
           # 各包必须共用 _all_in_package.ps1 生成的同一个 stage，
           # 只靠 -OutputName / -ExcludeBuild / -GramPath 区分。
-          # full 暂停打包（2026-10-23）：真人画像实测大 gram 无增益
-          #（混合回放 64.8 vs 关 65.7 噪声级、标准语料整句零差），标准/lite
-          # 用户仍可下载独立 gram 文件后补整句增强。恢复 full：加回下面的
-          # 构建块 + 校验/上传/发布三处资产清单里的 setup-full 条目。
+          # full 档 2026-10-24 恢复（有用户索要内置 gram 的整句增强包）；
+          # 真人画像实测其对混打场景无增益的结论仍成立（14-交接 §九）。
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
             -StageDir .\installer\stage `
             -OutputName moqi-im-windows-setup-lite `
             -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*'
+
+      - name: Build standard and full installers
+        working-directory: ${{ github.workspace }}/moqi-im-windows
+        run: |
+          # 标准包（无 gram）+ full 包（内置大语法模型）共用同一 stage。
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
+            -StageDir .\installer\stage `
+            -OutputName moqi-im-windows-setup
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
+            -StageDir .\installer\stage `
+            -OutputName moqi-im-windows-setup-full `
+            -GramPath .\installer\dist\zh-hans-t-essay-bgw.gram
 
       - name: Verify embedded version
         working-directory: ${{ github.workspace }}/moqi-im-windows
@@ -180,6 +190,7 @@ jobs:
           $assets = @(
             "installer\dist\moqi-im-windows-setup.exe",
             "installer\dist\moqi-im-windows-setup-lite.exe",
+            "installer\dist\moqi-im-windows-setup-full.exe",
             "installer\dist\zh-hans-t-essay-bgw.gram"
           )
           foreach ($asset in $assets) {
@@ -201,6 +212,7 @@ jobs:
           path: |
             moqi-im-windows/installer/dist/moqi-im-windows-setup.exe
             moqi-im-windows/installer/dist/moqi-im-windows-setup-lite.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-full.exe
             moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
             moqi-im-windows/installer/dist/SHA256SUMS.txt
           if-no-files-found: error
@@ -219,6 +231,7 @@ jobs:
           $assets = @(
             "installer\dist\moqi-im-windows-setup.exe",
             "installer\dist\moqi-im-windows-setup-lite.exe",
+            "installer\dist\moqi-im-windows-setup-full.exe",
             "installer\dist\zh-hans-t-essay-bgw.gram",
             "installer\dist\SHA256SUMS.txt"
           )
