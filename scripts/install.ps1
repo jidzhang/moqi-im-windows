@@ -105,7 +105,7 @@ function Resolve-MoqiImeSource {
 
     foreach ($candidate in $candidates) {
         $fullPath = [System.IO.Path]::GetFullPath($candidate)
-        if (Test-Path -LiteralPath (Join-Path $fullPath "server.exe")) {
+        if (Test-Path -LiteralPath (Join-Path $fullPath "MoqiIME.exe")) {
             return $fullPath
         }
     }
@@ -119,9 +119,9 @@ function Copy-MoqiImeRuntime {
         [string] $DestinationRoot
     )
 
-    $serverExe = Join-Path $SourceRoot "server.exe"
+    $serverExe = Join-Path $SourceRoot "MoqiIME.exe"
     if (-not (Test-Path -LiteralPath $serverExe)) {
-        throw "moqi-ime server.exe not found: $serverExe"
+        throw "moqi-ime MoqiIME.exe not found: $serverExe"
     }
 
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null

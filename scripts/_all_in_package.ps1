@@ -143,7 +143,7 @@ Invoke-Step -FilePath "powershell.exe" -ArgumentList @(
     "-RepoRoot", "`"$MoqiImeRoot`""
 ) -WorkingDirectory $MoqiImeRoot
 
-if (-not (Test-Path -LiteralPath (Join-Path $moqiImeRuntimeDir "server.exe"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $moqiImeRuntimeDir "MoqiIME.exe"))) {
     throw "moqi-ime runtime was not produced: $moqiImeRuntimeDir"
 }
 
