@@ -155,7 +155,7 @@ jobs:
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
             -StageDir .\installer\stage `
             -OutputName moqi-im-windows-setup-lite `
-            -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*'
+            -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*,moqi-ime\input_methods\rime\data\zh-moqi.gram'
 
       - name: Build standard and full installers
         working-directory: ${{ github.workspace }}/moqi-im-windows
