@@ -40,7 +40,7 @@ if (-not (Test-Path -LiteralPath $x64Root)) {
 }
 
 $requiredPaths = @(
-    (Join-Path $win32Root 'MoqiLauncher.exe'),
+    (Join-Path $win32Root 'MoqiLaunch.exe'),
     (Join-Path $win32Root 'SetupHelper.exe'),
     (Join-Path $win32Root 'MoqiTextService.dll'),
     (Join-Path $win32Root 'backends.json'),
@@ -121,5 +121,12 @@ if ($p.ExitCode -ne 0) {
 
 $dist = Join-Path $PSScriptRoot 'dist'
 $outputBase = if ([string]::IsNullOrWhiteSpace($OutputName)) { 'moqi-im-windows-setup' } else { $OutputName }
+# Append the version to the output file name (2026-10-25, user decision):
+# setup-1.5.1.exe / setup-full-1.5.1.exe. Skip when already suffixed.
+if ($outputBase -notmatch "-$([regex]::Escape($Version))$") {
+    $versionedBase = $outputBase + '-' + $Version
+    Rename-Item -LiteralPath (Join-Path $dist ($outputBase + '.exe')) -NewName ($versionedBase + '.exe') -Force
+    $outputBase = $versionedBase
+}
 Write-Host "Output: $(Join-Path $dist ($outputBase + '.exe'))"
 exit 0

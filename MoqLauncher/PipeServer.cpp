@@ -55,9 +55,9 @@ using namespace std;
 namespace Moqi {
 
 PipeServer *PipeServer::singleton_ = nullptr;
-wchar_t PipeServer::singleInstanceMutexName_[] = L"MoqiLauncherMutex";
+wchar_t PipeServer::singleInstanceMutexName_[] = L"MoqiLaunchMutex";
 
-wchar_t PipeServer::wndClassName_[] = L"MoqiLauncherWnd";
+wchar_t PipeServer::wndClassName_[] = L"MoqiLaunchWnd";
 
 static wstring_convert<codecvt_utf8<wchar_t>> utf8Codec;
 
@@ -120,16 +120,16 @@ void PipeServer::initDataDir() {
 void PipeServer::initLogger() {
   auto logDirPath = dataDirPath_ + L"\\Log";
   auto logFile = Ime::DebugLogFile::prepareDailyLogFilePath(
-      logDirPath, L"MoqiLauncher.log");
+      logDirPath, L"MoqiLaunch.log");
 
   try {
-    logger_ = spdlog::rotating_logger_mt("MoqiLauncher", logFile,
+    logger_ = spdlog::rotating_logger_mt("MoqiLaunch", logFile,
                                          MAX_LOG_FILE_SIZE, NUM_LOG_FILES);
     spdlog::flush_on(spdlog::level::debug); // flush to the file on any kind of
                                             // errors (always flush)
   } catch (const spdlog::spdlog_ex &exc) {
     // fail to create file logger, fallback to console logger
-    logger_ = spdlog::stderr_logger_mt("MoqiLauncher");
+    logger_ = spdlog::stderr_logger_mt("MoqiLaunch");
   }
 
   logger_->set_level(logLevel_);
@@ -511,7 +511,7 @@ int PipeServer::exec(LPSTR cmd) {
     }
     return 0;
   }
-  // ensure that only one instance of MoqiLauncher can be running
+  // ensure that only one instance of MoqiLaunch can be running
   if (!initSingleInstance()) {
     return 0;
   }

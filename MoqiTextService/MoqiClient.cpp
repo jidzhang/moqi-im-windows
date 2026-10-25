@@ -1834,7 +1834,7 @@ bool Client::ensureLauncherRunning() {
   }
 
   std::wstring launcherPath = module->programDir();
-  launcherPath += L"\\MoqiLauncher.exe";
+  launcherPath += L"\\MoqiLaunch.exe";
   const DWORD attrs = ::GetFileAttributesW(launcherPath.c_str());
   if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
     return false;
@@ -1859,7 +1859,7 @@ bool Client::ensureLauncherRunning() {
 
 // Check whether a MoqiLauncher process exists (via its single-instance mutex).
 bool Client::isLauncherProcessRunning() {
-  HANDLE mutex = ::OpenMutexW(MUTEX_ALL_ACCESS, FALSE, L"MoqiLauncherMutex");
+  HANDLE mutex = ::OpenMutexW(MUTEX_ALL_ACCESS, FALSE, L"MoqiLaunchMutex");
   if (mutex != nullptr) {
     ::CloseHandle(mutex);
     return true;
@@ -1885,7 +1885,7 @@ bool Client::forceRestartLauncher() {
   }
   std::wstring taskkillPath = std::wstring(systemDir) + L"\\taskkill.exe";
   std::wstring commandLine =
-      L"\"" + taskkillPath + L"\" /F /IM MoqiLauncher.exe";
+      L"\"" + taskkillPath + L"\" /F /IM MoqiLaunch.exe";
   STARTUPINFOW startupInfo = {};
   startupInfo.cb = sizeof(startupInfo);
   PROCESS_INFORMATION processInfo = {};

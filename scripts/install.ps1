@@ -176,12 +176,12 @@ if (-not (Test-Path -LiteralPath $backends)) {
 }
 Copy-Item -LiteralPath $backends -Destination (Join-Path $stageWin32Root "backends.json") -Force
 
-$launcher = Resolve-ArtifactPath -Label "MoqiLauncher.exe" -Candidates @(
-    (Join-Path $Win32BuildDir "MoqiLauncher.exe"),
-    (Join-Path $Win32BuildDir "Release\MoqiLauncher.exe"),
-    (Join-Path $Win32BuildDir "MoqLauncher\Release\MoqiLauncher.exe")
+$launcher = Resolve-ArtifactPath -Label "MoqiLaunch.exe" -Candidates @(
+    (Join-Path $Win32BuildDir "MoqiLaunch.exe"),
+    (Join-Path $Win32BuildDir "Release\MoqiLaunch.exe"),
+    (Join-Path $Win32BuildDir "MoqLauncher\Release\MoqiLaunch.exe")
 )
-Copy-IfExists -Source $launcher -Destination (Join-Path $stageWin32Root "MoqiLauncher.exe")
+Copy-IfExists -Source $launcher -Destination (Join-Path $stageWin32Root "MoqiLaunch.exe")
 
 $setupHelper = Resolve-ArtifactPath -Label "SetupHelper.exe" -Candidates @(
     (Join-Path $Win32BuildDir "SetupHelper.exe"),

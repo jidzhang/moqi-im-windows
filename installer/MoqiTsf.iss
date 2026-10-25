@@ -32,7 +32,10 @@ AppVersion={#MyAppVersion}
 ; ARP（卸载程序列表）显示名：显式只写应用名；版本单独存 DisplayVersion，
 ; 由系统界面自行拼装。默认值会用 NameAndVersion 消息拼出"名称 版本 x.y.z"，
 ; 与 2026-10-21 定稿的显示口径（不带"版本"字样）冲突。
-UninstallDisplayName={#MyAppName}
+; 2026-10-25 用户定：版本号必须在卸载面板可见（Win10 设置>应用的列表视图
+; 不显示 DisplayVersion 列），拼进 DisplayName；appwiz.cpl 的版本列由
+; DisplayVersion（AppVersion 自动写）继续提供。
+UninstallDisplayName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -85,11 +88,12 @@ Name: "{autoprograms}\{#MyAppName}\Logs"; Filename: "{win}\explorer.exe"; Parame
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
-  ValueType: string; ValueName: "MoqiLauncher"; \
-  ValueData: """{app}\MoqiLauncher.exe"""; \
+  ValueType: string; ValueName: "MoqiLaunch"; \
+  ValueData: """{app}\MoqiLaunch.exe"""; \
   Flags: uninsdeletevalue
 
 [InstallDelete]
+Type: files; Name: "{app}\MoqiLauncher.exe"
 Type: filesandordirs; Name: "{app}\moqi-ime"
 Type: filesandordirs; Name: "{app}\x64"
 
@@ -107,6 +111,7 @@ var
 function ExistingImeInstallationPresent: Boolean;
 begin
   Result :=
+    FileExists(ExpandConstant('{app}\MoqiLaunch.exe')) or
     FileExists(ExpandConstant('{app}\MoqiLauncher.exe')) or
     FileExists(ExpandConstant('{syswow64}\MoqiTextService.dll')) or
     FileExists(ExpandConstant('{sys}\MoqiTextService.dll')) or
@@ -157,8 +162,16 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, R);
 end;
 
+procedure DeleteLegacyAutorunValue;
+begin
+  // v1.6.0 起运行键值名 MoqiLaunch；旧名留着会变成指向已删 exe 的死启动项。
+  RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run',
+    'MoqiLauncher');
+end;
+
 procedure StopMoqiProcesses;
 begin
+  TryKillProcessImage('MoqiLaunch.exe');
   TryKillProcessImage('MoqiLauncher.exe');
   TryKillBackendServers;
 end;
@@ -212,6 +225,7 @@ begin
   begin
     HadExistingInstall := ExistingImeInstallationPresent;
     StopMoqiProcesses;
+    DeleteLegacyAutorunValue;
   end;
 
   if CurStep = ssPostInstall then
@@ -246,7 +260,7 @@ begin
     // 需重启场景不拉起（重启后登录任务/Run 键会拉）。
     if HelperInstallSucceeded and (not HelperInstallNeedsRestart) then
     begin
-      if not Exec(ExpandConstant('{app}\MoqiLauncher.exe'), '',
+      if not Exec(ExpandConstant('{app}\MoqiLaunch.exe'), '',
                   ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ResultCode) then
         Log('Launch MoqiLauncher failed, code ' + IntToStr(ResultCode))
       else
@@ -271,6 +285,7 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     StopMoqiProcesses;
+    DeleteLegacyAutorunValue;
     if not RunSetupHelper(BuildUninstallSetupHelperParameters('/u'), ResultCode) then
       HandleSetupHelperResult('SetupHelper uninstall', ResultCode);
     if ResultCode = SetupHelperExitRestartRequired then

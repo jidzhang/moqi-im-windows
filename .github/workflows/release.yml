@@ -188,9 +188,9 @@ jobs:
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
           $assets = @(
-            "installer\dist\moqi-im-windows-setup.exe",
-            "installer\dist\moqi-im-windows-setup-lite.exe",
-            "installer\dist\moqi-im-windows-setup-full.exe",
+            "installer\dist\moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-full-${{ steps.version.outputs.version }}.exe",
             "installer\dist\zh-hans-t-essay-bgw.gram"
           )
           foreach ($asset in $assets) {
@@ -210,9 +210,9 @@ jobs:
         with:
           name: moqi-im-windows-${{ steps.version.outputs.tag }}
           path: |
-            moqi-im-windows/installer/dist/moqi-im-windows-setup.exe
-            moqi-im-windows/installer/dist/moqi-im-windows-setup-lite.exe
-            moqi-im-windows/installer/dist/moqi-im-windows-setup-full.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-full-${{ steps.version.outputs.version }}.exe
             moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
             moqi-im-windows/installer/dist/SHA256SUMS.txt
           if-no-files-found: error
@@ -229,9 +229,9 @@ jobs:
           # 本步降级为 Continue，用 $LASTEXITCODE 显式判错。
           $ErrorActionPreference = 'Continue'
           $assets = @(
-            "installer\dist\moqi-im-windows-setup.exe",
-            "installer\dist\moqi-im-windows-setup-lite.exe",
-            "installer\dist\moqi-im-windows-setup-full.exe",
+            "installer\dist\moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-full-${{ steps.version.outputs.version }}.exe",
             "installer\dist\zh-hans-t-essay-bgw.gram",
             "installer\dist\SHA256SUMS.txt"
           )

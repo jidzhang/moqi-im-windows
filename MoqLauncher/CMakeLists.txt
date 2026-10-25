@@ -55,6 +55,9 @@ add_executable(MoqiLauncher WIN32
 set_source_files_properties(${MOQI_PROTO_CPP} ${MOQI_PROTO_HDR} PROPERTIES GENERATED TRUE)
 add_dependencies(MoqiLauncher moqi_proto_cpp_gen)
 
+# 进程名去 er（2026-10-25 用户定）：产物 MoqiLaunch.exe，工程/目录名不动
+set_target_properties(MoqiLauncher PROPERTIES OUTPUT_NAME MoqiLaunch)
+
 target_link_libraries(MoqiLauncher 
     jsoncpp_lib_static
     ${MOQI_PROTOBUF_TARGET}

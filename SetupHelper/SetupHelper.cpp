@@ -521,10 +521,10 @@ bool DeleteReregisterTask() {
 // primary autostart path).
 bool ScheduleLauncherAutostartTask(const Options& options, std::wstring* error) {
   const fs::path launcher_path =
-      fs::path(options.app_dir) / L"MoqiLauncher.exe";
+      fs::path(options.app_dir) / L"MoqiLaunch.exe";
   if (!fs::exists(launcher_path)) {
     if (error != nullptr) {
-      *error = L"MoqiLauncher.exe not found in app dir; skip autostart task.";
+      *error = L"MoqiLaunch.exe not found in app dir; skip autostart task.";
     }
     return false;
   }

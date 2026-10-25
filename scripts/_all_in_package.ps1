@@ -173,9 +173,18 @@ Invoke-Step -FilePath "powershell.exe" -ArgumentList @(
     "-MoqiImeSource", "`"$moqiImeRuntimeDir`""
 ) -WorkingDirectory $RepoRoot
 
-$installerPath = Join-Path $RepoRoot "installer\dist\moqi-im-windows-setup.exe"
-if (Test-Path -LiteralPath $installerPath) {
+# Product name now carries the version suffix (2026-10-25): accept the versioned
+# file produced by build-installer.ps1, falling back to the legacy plain name.
+$versionFile = Join-Path $RepoRoot "version.txt"
+$version = if (Test-Path -LiteralPath $versionFile) { (Get-Content -LiteralPath $versionFile -Raw).Trim() } else { "" }
+$installerCandidates = @()
+if (-not [string]::IsNullOrWhiteSpace($version)) {
+    $installerCandidates += (Join-Path $RepoRoot "installer\dist\moqi-im-windows-setup-$version.exe")
+}
+$installerCandidates += (Join-Path $RepoRoot "installer\dist\moqi-im-windows-setup.exe")
+$installerPath = $installerCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if ($installerPath) {
     Write-Host "OK: $installerPath"
 } else {
-    throw "Installer was not produced: $installerPath"
+    throw "Installer was not produced: $($installerCandidates -join ' or ')"
 }
