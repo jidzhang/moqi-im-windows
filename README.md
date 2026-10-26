@@ -34,7 +34,7 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 | `moqi-im-windows-setup.exe`（约 73MB） | 含预编译词库 | 绝大多数用户 |
 | `moqi-im-windows-setup-full.exe`（约 228MB） | 预编译词库 + 大语法模型 | 想要更好的长句效果 |
 
-已装 lite/标准包想后补大语法模型？下载 `zh-hans-t-gram.gram` 放进 `%APPDATA%\Moqi\Rime` 即自动启用——不需要管理员权限，升级重装也不会丢。详见 [三档安装包说明](installer/PACKAGES.md)。
+已装 lite/标准包想后补大语法模型？下载 `zh-hans-t-essay-bgw.gram` 放进 `%APPDATA%\Moqi\Rime` 即自动启用——不需要管理员权限，升级重装也不会丢。详见 [三档安装包说明](installer/PACKAGES.md)。
 
 ## 功能一览
 
