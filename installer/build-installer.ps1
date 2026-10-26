@@ -125,6 +125,12 @@ $outputBase = if ([string]::IsNullOrWhiteSpace($OutputName)) { 'moqi-im-windows-
 # setup-1.5.1.exe / setup-full-1.5.1.exe. Skip when already suffixed.
 if ($outputBase -notmatch "-$([regex]::Escape($Version))$") {
     $versionedBase = $outputBase + '-' + $Version
+    $versionedPath = Join-Path $dist ($versionedBase + '.exe')
+    # Rename-Item cannot overwrite an existing file even with -Force; remove the
+    # stale versioned output from a previous local build first.
+    if (Test-Path -LiteralPath $versionedPath) {
+        Remove-Item -LiteralPath $versionedPath -Force
+    }
     Rename-Item -LiteralPath (Join-Path $dist ($outputBase + '.exe')) -NewName ($versionedBase + '.exe') -Force
     $outputBase = $versionedBase
 }
