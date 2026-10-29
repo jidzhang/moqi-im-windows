@@ -56,4 +56,5 @@ build64-*
 cmake-build-ninja
 
 installer/stage
-installer/dist
+installer/distdebug.log
+installer/dbg-gramarm/
