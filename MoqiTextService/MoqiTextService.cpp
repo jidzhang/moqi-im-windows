@@ -1381,12 +1381,33 @@ void CALLBACK TextService::onMessageTimeout(HWND hwnd, UINT msg, UINT_PTR id, DW
 void TextService::updateLangButtons() {
 }
 
-// Win10 1607+ 才有 GetDpiForWindow；取不到（老系统/窗口为空）返回 0，
-// 调用方退回主屏 DC 口径（与旧行为一致）。多屏 DPI 不同时，per-monitor
-// 宿主里这里返回候选窗所在显示器的 DPI，字号随屏缩放。
+// 取显示器级实时 DPI（设置改完即生效），不依赖窗口消息：隐藏的候选窗收
+// 不到 WM_DPICHANGED，GetDpiForWindow 也会一直挂在旧值（实测系统缩放
+// 125%→100% 后候选窗字号挂 125% 数小时不回退，直到某次窗口事件刷新了
+// DPI 关联才恢复）。取不到（老系统/窗口为空/调用失败）返回 0，调用方
+// 退回主屏 DC 口径（与旧行为一致）。多屏 DPI 不同时同样正确：check 在
+// 候选窗移动后跑，这里给的就是所在显示器的实时值。
 static UINT candidateWindowDpi(HWND hwnd) {
 	if (hwnd == nullptr) {
 		return 0;
+	}
+	// MDT_EFFECTIVE_DPI = 0（shcore.h 的 MONITOR_DPI_TYPE 首值），不引头文件
+	using GetDpiForMonitorFunc = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+	static GetDpiForMonitorFunc getDpiForMonitor = []() -> GetDpiForMonitorFunc {
+		HMODULE shcore = ::LoadLibraryW(L"shcore.dll");
+		return shcore != nullptr
+			? reinterpret_cast<GetDpiForMonitorFunc>(
+				reinterpret_cast<void*>(::GetProcAddress(shcore, "GetDpiForMonitor")))
+			: nullptr;
+	}();
+	if (getDpiForMonitor != nullptr) {
+		const HMONITOR monitor = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+		UINT dpiX = 0;
+		UINT dpiY = 0;
+		if (monitor != nullptr &&
+			SUCCEEDED(getDpiForMonitor(monitor, 0, &dpiX, &dpiY)) && dpiY != 0) {
+			return dpiY;
+		}
 	}
 	using GetDpiForWindowFunc = UINT(WINAPI*)(HWND);
 	static GetDpiForWindowFunc getDpiForWindow = []() -> GetDpiForWindowFunc {
@@ -1477,9 +1498,9 @@ void TextService::applyCandidateAppearanceNow() {
 	refreshCandidateAppearance();
 }
 
-// 候选窗跨屏（多显示器 DPI 不同）时按所在显示器 DPI 重建字体并重算窗口尺寸。
-// per-monitor 宿主里 WM_DPICHANGED / 每次移动后会到这里；非 per-monitor 宿主
-// GetDpiForWindow 恒为进程口径，不会触发重建。
+// 候选窗跨屏（多显示器 DPI 不同）/ 系统缩放改变时按所在显示器实时 DPI
+// 重建字体并重算窗口尺寸。WM_DPICHANGED（窗口可见时）、每次显示/移动后
+// 都会到这里；DPI 源是显示器级实时值，隐藏窗口的陈旧 DPI 不影响。
 void TextService::checkCandidateWindowDpiChanged() {
 	if (!candidateWindow_) {
 		return;

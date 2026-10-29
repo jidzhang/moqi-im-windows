@@ -26,15 +26,17 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 
 ## 下载安装
 
-从本仓库 [Releases](https://github.com/jidzhang/moqi-im-windows/releases) 下载安装包，三档任选：
+从本仓库 [Releases](https://github.com/jidzhang/moqi-im-windows/releases) 下载安装包，按需任选（不带模型的按形态命名，带模型的以模型命名）：
 
 | 文件 | 内容 | 适合谁 |
 |---|---|---|
-| `moqi-im-windows-setup-lite.exe`（约 35MB） | 不含预编译词库 | 想要最小安装包 |
-| `moqi-im-windows-setup.exe`（约 73MB） | 含预编译词库 | 绝大多数用户 |
-| `moqi-im-windows-setup-full.exe`（约 228MB） | 预编译词库 + 大语法模型 | 想要更好的长句效果 |
+| `moqi-im-windows-setup.exe`（约 74MB） | 预编译词库，无语法模型 | **推荐给绝大多数用户**：混拼最优（41.40%）、体积适中 |
+| `moqi-im-windows-setup-lite.exe`（约 36MB） | 无预编译词库与模型 | 只想要最小包；解码与标准版同分，首跑编译词库约 20 秒 |
+| `moqi-im-windows-setup-essay.exe`（约 229MB） | + `zh-hans-t-essay-bgw` | 长句优先：整句 58.33%（+4.16），混拼 38.20%（−3.20） |
+| `moqi-im-windows-setup-wanxiang.exe`（约 382MB） | + `wanxiang-lts-zh-hans` | 只写长文：整句 63.33%（+9.16），但混拼 31.80%（−9.60） |
+| `moqi-im-windows-setup-wiki.exe`（约 124MB） | + 自训 `zh-moqi-wiki` | 暂不建议：整句/混拼均与无模型档同分 |
 
-已装 lite/标准包想后补大语法模型？下载 `zh-hans-t-essay-bgw.gram` 放进 `%APPDATA%\Moqi\Rime` 即自动启用——不需要管理员权限，升级重装也不会丢。详见 [三档安装包说明](installer/PACKAGES.md)。
+已装 lite/标准包想后补语法模型？把任意 `.gram` 放进 `%APPDATA%\Moqi\Rime` 即自动启用（门槛 ≥50MB，取最大者）——不需要管理员权限，升级重装也不会丢。详见 [安装包说明](installer/PACKAGES.md)。
 
 ## 功能一览
 
@@ -56,7 +58,7 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
   2. 把键名 `"base_url删掉我即可用AI功能"` 改成 `"base_url"`（冒号后面的网址不用动）
   3. 在 `"api_key"` 里填入你自己的 key；也支持任意 OpenAI 兼容接口——改 `base_url` 和 `model` 即可指向私有部署
   4. 托盘菜单 →「重启墨奇引擎」生效
-- 大语法模型：essay 级语言模型参与组句排序，长句和上下文延续更准；装 full 包或按上文放置模型文件即自动启用
+- 大语法模型：参与组句排序，长句更准（实测 wanxiang +9.16 / essay +4.16，但混拼分别 −9.60 / −3.20）；装对应模型档或按上文放置模型文件即自动启用
 
 ![AI 功能](others/imgs/input-ai.gif)
 
