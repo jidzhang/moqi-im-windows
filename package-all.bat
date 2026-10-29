@@ -1,5 +1,5 @@
 @echo off
-REM Double-click wrapper: build all 4 installer tiers locally.
+REM Double-click wrapper: build all 5 installer tiers locally.
 REM Prompts for version (default = current version.txt). Log written to
 REM installer\dist\package-all.log. Pure ASCII by project rule.
 setlocal
@@ -13,8 +13,8 @@ if "%VER%"=="" (
 )
 
 echo.
-echo Building all 4 tiers for version %VER% ...
-echo (Go backend + TSF DLL x64/x86 + dict prebuild + Inno x4, about 15 min)
+echo Building all 5 tiers for version %VER% ...
+echo (Go backend + TSF DLL x64/x86 + dict prebuild + Inno x5, about 15 min)
 echo Log: installer\dist\package-all.log
 echo.
 

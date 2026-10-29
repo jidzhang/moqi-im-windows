@@ -1,15 +1,23 @@
 # 墨奇输入法 Windows 安装包说明
 
-## 一、四个下载怎么选
+## 一、五个下载怎么选（2026-10-27 实测重写）
 
-| 文件 | 内容 | 适合谁 |
-|---|---|---|
-| `moqi-im-windows-setup-lite.exe` | 不含预编译词库（`data/build`），不含语法模型 | 想要最小安装包。首次部署现场编译词库，用户实测约 20 秒 |
-| `moqi-im-windows-setup.exe` | 含预编译词库，不含语法模型 | 绝大多数用户。装完即用，首键不卡 |
-| `moqi-im-windows-setup-full.exe` | 预编译词库 + `zh-hans-t-essay-bgw.gram` 语法模型 | 想要更好的长句/上下文效果，不介意包大 |
-| `zh-hans-t-essay-bgw.gram` | 单独的大语法模型（196.8 MB） | 已经装了 lite / 标准包，想后补语法模型 |
+实测口径：产品原生栈（rime.dll + Go 管线，无 GUI）· 整句 120 句 + 混拼 500 对 ·
+每臂全新用户目录 · 复跑一致。方法与冻结工件见 benchmark 仓
+`docs/protocol_native_stack.md`、结论见 `docs/install_recommendation.md`。
 
-三个安装包都同时安装 32 位和 64 位 TSF DLL，不需要按系统架构二选一。
+| 文件 | 内容 | 整句 | 混拼 | 适合谁 |
+|---|---|---|---|---|
+| `moqi-im-windows-setup.exe` | 预编译词库，无语法模型 | 54.17% | **41.40%** | **推荐给绝大多数用户**：混拼最优、体积适中、装完即用 |
+| `moqi-im-windows-setup-lite.exe` | 不含预编译词库与模型 | 54.17% | 41.40% | 只想要最小包；与标准版解码同分，仅首跑现场编译词库（约 20 秒） |
+| `moqi-im-windows-setup-essay.exe` | + `zh-hans-t-essay-bgw`（206MB） | **58.33%（+4.16）** | 38.20%（−3.20） | 长句优先，能接受混拼小幅下降 |
+| `moqi-im-windows-setup-wanxiang.exe` | + `wanxiang-lts-zh-hans`（398MB） | **63.33%（+9.16）** | 31.80%（−9.60） | 只写长文/连续整句的重度用户；**混拼明显变差，日常短句不建议** |
+| `moqi-im-windows-setup-wiki.exe` | + `zh-moqi-wiki`（64.5MB，自训/纯维基 CC BY-SA） | 54.17%（±0） | 41.40%（±0） | **不建议**：与无模型档双维度同分（正考虑下架） |
+
+一句话：**日常用标准版**；写长文用 wanxiang；中间选择 essay；极限小包用 lite；
+wiki 档暂无收益。
+
+所有安装包都同时安装 32 位和 64 位 TSF DLL，不需要按系统架构二选一。
 
 ## 二、单独安装语法模型（第 4 个文件）
 
@@ -29,7 +37,7 @@
    ```
 
 3. 让墨奇重新加载：托盘图标右键 → **“刷新配置(&R)”**，或退出 `MoqiLauncher` 再启动。
-4. 默认配置 `grammar_model` 为 `auto`，会自动选择上述两个目录里 **≥64MB 的最大 `.gram`**，不需要改配置。
+4. 默认配置 `grammar_model` 为 `auto`，会自动选择上述两个目录里 **≥50MB 的最大 `.gram`**（2026-10-27 由 64MB 下调，自训模型 64.5MB 由此可被自动识别），不需要改配置。
 
 复制后目录里应该有（二选一即可，推荐用户目录）：
 
@@ -57,7 +65,7 @@ C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选
 
 可选值：
 
-- `"auto"`（默认）：自动选上面两个目录里最大的、≥64MB 的 `.gram`。
+- `"auto"`（默认）：自动选上面两个目录里最大的、≥50MB 的 `.gram`。
 - `"zh-hans-t-essay-bgw"`：显式指定。**值 = 文件名去掉 `.gram`**。
 - `"off"`：不启用任何外部 gram。
 
@@ -81,4 +89,4 @@ C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选
   拼音输入过程中按数字仍然用于选择第 N 个候选。
 - **候选窗**：首格高亮四边贴边（上下左右都贴到边），直角；默认 7 个候选、每行 9 个。
 - **语法模型**：不再自带 7MB 小模型；标准包/lite 包不含任何 `.gram`，
-  full 包与单独下载的 `zh-hans-t-essay-bgw.gram` 含大模型。
+  essay / wanxiang / wiki 三档各带一个模型；也可单独下载 `.gram` 放入用户目录启用。

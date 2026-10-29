@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
   Build all FOUR installer tiers locally (2026-10-25, user decision):
-  lite / standard / full(-essay) / wanxiang.
+  lite / standard / essay / wiki / wanxiang.
 
   The standard tier is produced by _all_in_package.ps1, which also builds the
   shared stage tree and version.txt. The other three tiers reuse that stage
@@ -15,7 +15,8 @@
   Output files (installer\dist\):
     moqi-im-windows-setup-<ver>.exe           (standard)
     moqi-im-windows-setup-lite-<ver>.exe      (lite: no gram, no prebuilt data)
-    moqi-im-windows-setup-full-<ver>.exe      (essay gram bundled)
+    moqi-im-windows-setup-essay-<ver>.exe     (essay gram bundled)
+    moqi-im-windows-setup-wiki-<ver>.exe      (self-trained wiki gram bundled)
     moqi-im-windows-setup-wanxiang-<ver>.exe  (wanxiang gram bundled, local only)
 
 .EXAMPLE
@@ -44,7 +45,10 @@ if (-not $EssayGram) {
 if (-not $WanxiangGram) {
     $WanxiangGram = Join-Path $RepoRoot "installer\dist\wanxiang-lts-zh-hans.gram"
 }
-foreach ($gram in @($EssayGram, $WanxiangGram)) {
+if (-not $WikiGram) {
+    $WikiGram = Join-Path $RepoRoot "installer\dist\zh-moqi-wiki.gram"
+}
+foreach ($gram in @($EssayGram, $WanxiangGram, $WikiGram)) {
     if (-not (Test-Path -LiteralPath $gram)) {
         throw "Grammar model not found: $gram (put it in installer\dist or pass -EssayGram/-WanxiangGram)"
     }
@@ -54,7 +58,7 @@ $allIn = Join-Path $PSScriptRoot "_all_in_package.ps1"
 $buildInstaller = Join-Path $RepoRoot "installer\build-installer.ps1"
 $stageDir = Join-Path $RepoRoot "installer\stage"
 
-Write-Host "== Tier 1/4: standard (shared stage + version.txt) =="
+Write-Host "== Tier 1/5: standard (shared stage + version.txt + 9MB gram) =="
 $allArgs = @{
     RepoRoot = $RepoRoot
     Configuration = $Configuration
@@ -65,21 +69,39 @@ if ($ProtobufRoot) { $allArgs.ProtobufRoot = $ProtobufRoot }
 if ($ProtobufSourceDir) { $allArgs.ProtobufSourceDir = $ProtobufSourceDir }
 if ($Version) { $allArgs.Version = $Version }
 & $allIn @allArgs
+# 2026-10-29: standard tier now ships the 9MB zh-moqi.gram.
+# Re-run ISCC on the shared stage with -GramPath instead of plumbing the
+# parameter through two layers of scripts.
+$StdGram = Join-Path $RepoRoot "installer\dist\zh-moqi.gram"
+if (-not (Test-Path -LiteralPath $StdGram)) { throw "standard gram not found: $StdGram" }
+& $buildInstaller -StageDir $stageDir `
+    -OutputName "moqi-im-windows-setup" `
+    -GramPath $StdGram
 
-Write-Host "== Tier 2/4: lite =="
+Write-Host "== Tier 2/5: lite (1KB dummy gram: BeamSearch switch, no content) =="
+$DummyGram = Join-Path $RepoRoot "installer\dist\zh-moqi-dummy.gram"
+if (-not (Test-Path -LiteralPath $DummyGram)) { throw "dummy gram not found: $DummyGram" }
 & $buildInstaller -StageDir $stageDir `
     -OutputName "moqi-im-windows-setup-lite" `
-    -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*,moqi-ime\input_methods\rime\data\zh-moqi.gram'
+    -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
+    -GramPath $DummyGram
 
-Write-Host "== Tier 3/4: full (essay) =="
+Write-Host "== Tier 3/5: essay =="
 & $buildInstaller -StageDir $stageDir `
-    -OutputName "moqi-im-windows-setup-full" `
+    -OutputName "moqi-im-windows-setup-essay" `
     -GramPath $EssayGram
 
-Write-Host "== Tier 4/4: wanxiang (local-only tier) =="
+Write-Host "== Tier 4/5: wanxiang (local-only tier) =="
 & $buildInstaller -StageDir $stageDir `
     -OutputName "moqi-im-windows-setup-wanxiang" `
     -GramPath $WanxiangGram
+Write-Host "== Tier 5/5: wiki (self-trained gram) =="
+& $buildInstaller -StageDir $stageDir `
+    -Version $Version `
+    -OutputName "moqi-im-windows-setup-wiki" `
+    -GramPath $WikiGram
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $RepoRoot ("installer\dist\moqi-im-windows-setup-wiki-" + $Version + ".exe")))) { throw "wiki tier failed" }
+
 
 Write-Host ""
 Write-Host "== All tiers built: =="
@@ -87,3 +109,4 @@ Get-ChildItem (Join-Path $RepoRoot "installer\dist") -Filter "moqi-im-windows-se
     Sort-Object LastWriteTime -Descending |
     Select-Object Name, @{N = "SizeMB"; E = { [math]::Round($_.Length / 1MB, 1) } }, LastWriteTime |
     Format-Table -AutoSize
+
