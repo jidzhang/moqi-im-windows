@@ -197,9 +197,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'standard tier failed' }
 
           # lite 档：1KB dummy gram（BeamSearch 开关，无内容）
+          # Excludes 里的路径必须用反斜杠（Inno 的 [Files] Excludes 按 Windows 分隔符匹配，
+          # 正斜杠不生效 → 预编译词库缓存剔不掉，lite 白胖 40MB）。
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
             -StageDir ./installer/stage -OutputName moqi-im-windows-setup-lite `
-            -ExcludeBuild 'moqi-ime/input_methods/rime/data/build/*' `
+            -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
             -GramPath $grams.dummy -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'lite tier failed' }
 
