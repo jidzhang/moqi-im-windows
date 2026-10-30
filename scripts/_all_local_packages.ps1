@@ -37,8 +37,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $RepoRoot) { $RepoRoot = Join-Path $PSScriptRoot ".." }
-# 默认版本号取 version.txt：wiki 档的产物存在性检查用 $Version 拼文件名，
-# 空值会去找 "wiki-.exe" 而误报 wiki tier failed（2026-10-29 实证，v10 同样中招）。
+# Default $Version from version.txt: the wiki-tier existence check builds the
+# file name from $Version, so an empty value looks for "wiki-.exe" and reports
+# "wiki tier failed" even though the installer was produced (utf8/ANSI hazard:
+# keep this file pure ASCII).
 if (-not $Version) {
     $Version = (Get-Content (Join-Path $RepoRoot "version.txt") -Raw).Trim()
 }
