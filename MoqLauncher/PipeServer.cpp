@@ -61,31 +61,21 @@ wchar_t PipeServer::wndClassName_[] = L"MoqiLaunchWnd";
 
 static wstring_convert<codecvt_utf8<wchar_t>> utf8Codec;
 
-static constexpr UINT WM_SHELL_NOTIFY_ICON = WM_APP + 1;
-static constexpr UINT WM_SHOW_TRAY_NOTIFICATION = WM_APP + 2;
 static constexpr UINT WM_FLUSH_CLIPBOARD_UPLOAD = WM_APP + 3;
 static constexpr UINT ID_CLIPBOARD_DEBOUNCE_TIMER = 2001;
 static constexpr UINT CLIPBOARD_DEBOUNCE_MS = 400;
-static constexpr UINT MAIN_SHELL_NOTIFY_ICON_ID = 1;
-static constexpr UINT TRAY_NOTIFICATION_TIMEOUT_MS = 5000;
 
-static constexpr UINT ID_ENABLE_DEBUG_LOG = 1000;
-static constexpr UINT ID_SHOW_DEBUG_LOGS = 1001;
-static constexpr UINT ID_RESTART_Moqi_BACKENDS = 1002;
-static constexpr UINT ID_EXIT_Moqi = 1003;
+// 语言栏菜单里的启动器级命令，id 与 Go 后端 input_methods/rime/rime.go 的
+// ID_LAUNCHER_* 一一对应（菜单由后端生成，请求经本进程代理，见 handleLauncherCommand）。
+static constexpr uint32_t LAUNCHER_CMD_DEBUG_LOG = 30;
+static constexpr uint32_t LAUNCHER_CMD_RESTART_BACKENDS = 32;
+static constexpr uint32_t LAUNCHER_CMD_QUIT = 33;
 
 static constexpr size_t MAX_LOG_FILE_SIZE =
     5 * 1024 * 1024;                    // log file size: 5 MB
 static constexpr int NUM_LOG_FILES = 5; // backup 3 copies of the log file
 
 static constexpr wchar_t CONFIG_FILE_REL_PATH[] = L"\\MoqiLauncher.json";
-
-static void copyNotifyText(wchar_t *dest, size_t destCount, const std::wstring &text) {
-  if (destCount == 0) {
-    return;
-  }
-  wcsncpy_s(dest, destCount, text.c_str(), _TRUNCATE);
-}
 
 PipeServer::PipeServer()
     : quitExistingLauncher_(false), hwnd_(nullptr),
@@ -279,27 +269,6 @@ void PipeServer::prewarmBackends() {
   }
 }
 
-void PipeServer::asyncRestartAllBackends() {
-  // The backend objects runs in another thread owned by uv loop.
-  // So it's only safe to touch them in uv async callbacks.
-  auto callback = [](uv_async_t *asyncTask) {
-    // The callback is called from uv_loop's thread.
-    auto this_ = reinterpret_cast<PipeServer *>(asyncTask->data);
-    // really restart the backends.
-    this_->restartAllBackends();
-
-    // Free the resources used by the async task.
-    uv_close(reinterpret_cast<uv_handle_t *>(asyncTask),
-             [](uv_handle_t *handle) {
-               delete reinterpret_cast<uv_async_t *>(handle);
-             });
-  };
-  auto asyncTask = new uv_async_t{};
-  asyncTask->data = this;
-  uv_async_init(uv_default_loop(), asyncTask, callback);
-  uv_async_send(asyncTask);
-}
-
 void PipeServer::terminateAllBackends() {
   logger_->info("Terminate all backends");
   for (auto &backend : backends_) {
@@ -307,22 +276,6 @@ void PipeServer::terminateAllBackends() {
       backend->terminateProcess();
     }
   }
-}
-
-void PipeServer::asyncTerminateAllBackends() {
-  auto callback = [](uv_async_t *asyncTask) {
-    auto this_ = reinterpret_cast<PipeServer *>(asyncTask->data);
-    this_->terminateAllBackends();
-
-    uv_close(reinterpret_cast<uv_handle_t *>(asyncTask),
-             [](uv_handle_t *handle) {
-               delete reinterpret_cast<uv_async_t *>(handle);
-             });
-  };
-  auto asyncTask = new uv_async_t{};
-  asyncTask->data = this;
-  uv_async_init(uv_default_loop(), asyncTask, callback);
-  uv_async_send(asyncTask);
 }
 
 void PipeServer::shutdown() {
@@ -473,16 +426,38 @@ void PipeServer::removeClient(PipeClient *client) {
   delete client;
 }
 
-void PipeServer::enqueueTrayNotification(const std::wstring &title,
-                                         const std::wstring &message,
-                                         DWORD infoFlags) {
-  {
-    std::lock_guard<std::mutex> lock(trayNotificationsMutex_);
-    trayNotifications_.push_back(TrayNotificationRequest{title, message, infoFlags});
+// 语言栏菜单的启动器级命令。菜单由 Go 后端下发，请求经本进程代理到后端；
+// 这里在 uv 线程上就地执行，后端对这些 id 只回执不做事。
+void PipeServer::handleLauncherCommand(uint32_t commandId) {
+  switch (commandId) {
+  case LAUNCHER_CMD_DEBUG_LOG:
+    toggleDebugLog();
+    break;
+  case LAUNCHER_CMD_RESTART_BACKENDS:
+    restartAllBackends();
+    break;
+  case LAUNCHER_CMD_QUIT:
+    // 停到下一次按键：后端全停、启动器退出（TSF 侧 waitForRpcConnection 会再拉起）。
+    // 这里跑在 uv 线程、窗口归 GUI 线程，跨线程 DestroyWindow 会失败，
+    // 所以投递 WM_CLOSE 让 wndProc 在自己线程上走 requestShutdown。
+    terminateAllBackends();
+    if (hwnd_ != nullptr) {
+      ::PostMessage(hwnd_, WM_CLOSE, 0, 0);
+    }
+    break;
+  default:
+    break;
   }
-  if (hwnd_ != nullptr) {
-    ::PostMessage(hwnd_, WM_SHOW_TRAY_NOTIFICATION, 0, 0);
-  }
+}
+
+// 开关语义：开 = 启动器/后端 spdlog 走 debug，同时配置写 "trace" 让前端 TSF 埋点
+// （tsf-debug.log / candidate-window.log，只有 trace 档才输出）真正打开；关 = 两者
+// 都关。此前只切 error<->debug，菜单永远打不开前端埋点，实机排障拿不到候选框日志。
+void PipeServer::toggleDebugLog() {
+  const bool enabling = logLevel_ > spdlog::level::debug;
+  logLevel_ = enabling ? spdlog::level::debug : spdlog::level::err;
+  logger_->set_level(logLevel_);
+  saveConfig(enabling);
 }
 
 void PipeServer::onNewClientConnected(uv_stream_t *server, int status) {
@@ -579,19 +554,6 @@ LRESULT PipeServer::wndProc(UINT msg, WPARAM wp, LPARAM lp) {
       requestShutdown();
     }
     return 0;
-  case WM_SHELL_NOTIFY_ICON:
-    // shell tray notification icon events
-    // reference:
-    // https://www.codeproject.com/Articles/4768/Basic-use-of-Shell-NotifyIcon-in-Win32
-    switch (LOWORD(lp)) {
-    case WM_RBUTTONDOWN:
-      showPopupMenu();
-      return 0;
-    }
-    break;
-  case WM_SHOW_TRAY_NOTIFICATION:
-    flushTrayNotifications();
-    return 0;
   case WM_CLIPBOARDUPDATE_MSG:
     onClipboardUpdate();
     return 0;
@@ -605,32 +567,6 @@ LRESULT PipeServer::wndProc(UINT msg, WPARAM wp, LPARAM lp) {
   case WM_FLUSH_CLIPBOARD_UPLOAD:
     flushDebouncedClipboardUpload();
     return 0;
-  case WM_COMMAND:
-    switch (LOWORD(wp)) {
-    case ID_RESTART_Moqi_BACKENDS:
-      asyncRestartAllBackends();
-      return 0;
-    case ID_EXIT_Moqi:
-      asyncTerminateAllBackends();
-      return 0;
-    case ID_ENABLE_DEBUG_LOG: {
-      // 开关语义：开 = 启动器/后端 spdlog 走 debug，同时配置写 "trace" 让
-      // 前端 TSF 埋点（tsf-debug.log / candidate-window.log，只有 trace 档
-      // 才输出）真正打开；关 = 两者都关。此前只切 error<->debug，菜单永远
-      // 打不开前端埋点，实机排障拿不到候选框日志。
-      const bool enabling = logLevel_ > spdlog::level::debug;
-      logLevel_ = enabling ? spdlog::level::debug : spdlog::level::err;
-      logger_->set_level(logLevel_);
-      saveConfig(enabling);
-      break;
-    }
-    case ID_SHOW_DEBUG_LOGS:
-      // show logs dir
-      ::ShellExecuteW(hwnd_, L"open", (dataDirPath_ + L"\\Log").c_str(),
-                      nullptr, nullptr, SW_SHOWNORMAL);
-      break;
-    }
-    break;
   case WM_CLOSE:
     logger_->info("Received WM_CLOSE");
     requestShutdown();
@@ -668,83 +604,6 @@ LPCTSTR PipeServer::registerWndClass(WNDCLASSEX &wndClass) const {
 
   auto wndClassAtom = ::RegisterClassEx(&wndClass);
   return LPCTSTR(wndClassAtom);
-}
-
-void PipeServer::createShellNotifyIcon() {
-  memset(&shellNotifyIconData_, 0, sizeof(shellNotifyIconData_));
-  shellNotifyIconData_.cbSize = sizeof(shellNotifyIconData_);
-  shellNotifyIconData_.uVersion =
-      NOTIFYICON_VERSION_4; // newer version after Windows Vista
-  shellNotifyIconData_.hWnd = hwnd_;
-  shellNotifyIconData_.uID = MAIN_SHELL_NOTIFY_ICON_ID;
-  shellNotifyIconData_.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-  shellNotifyIconData_.uCallbackMessage = WM_SHELL_NOTIFY_ICON;
-  auto hinstance = HINSTANCE(::GetModuleHandle(NULL));
-  shellNotifyIconData_.hIcon = static_cast<HICON>(::LoadImage(
-      hinstance, MAKEINTRESOURCE(IDI_MOQI_LAUNCHER), IMAGE_ICON,
-      ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON),
-      LR_DEFAULTCOLOR));
-  if (shellNotifyIconData_.hIcon == nullptr) {
-    shellNotifyIconData_.hIcon = ::LoadIcon(NULL, IDI_APPLICATION);
-  }
-
-  wcscpy_s(shellNotifyIconData_.szTip, L"墨奇输入法");
-
-  ::Shell_NotifyIcon(NIM_ADD, &shellNotifyIconData_);
-}
-
-void PipeServer::destroyShellNotifyIcon() {
-  ::Shell_NotifyIcon(NIM_DELETE, &shellNotifyIconData_);
-}
-
-void PipeServer::showTrayNotification(const std::wstring &title,
-                                      const std::wstring &message,
-                                      DWORD infoFlags) {
-  NOTIFYICONDATA notifyData = shellNotifyIconData_;
-  notifyData.uFlags = NIF_INFO;
-  notifyData.dwInfoFlags = infoFlags;
-  notifyData.uTimeout = TRAY_NOTIFICATION_TIMEOUT_MS;
-  copyNotifyText(notifyData.szInfoTitle, ARRAYSIZE(notifyData.szInfoTitle), title);
-  copyNotifyText(notifyData.szInfo, ARRAYSIZE(notifyData.szInfo), message);
-  ::Shell_NotifyIcon(NIM_MODIFY, &notifyData);
-}
-
-void PipeServer::flushTrayNotifications() {
-  std::deque<TrayNotificationRequest> notifications;
-  {
-    std::lock_guard<std::mutex> lock(trayNotificationsMutex_);
-    notifications.swap(trayNotifications_);
-  }
-  for (const auto &notification : notifications) {
-    showTrayNotification(notification.title, notification.message,
-                         notification.infoFlags);
-  }
-}
-
-void PipeServer::showPopupMenu() const {
-  // NOTE: according to the API doc of NOTIFYICONDATA, we should able to get x &
-  // y pos from WPARAM. However, it does not work in Windows 10 during my
-  // experiment. So we get cursor pos instead.
-  POINT pos;
-  ::GetCursorPos(&pos);
-
-  HMENU hmenu = ::CreatePopupMenu();
-  // FIXME: make this translatable later
-  bool debugEnabled = logLevel_ <= spdlog::level::debug;
-  ::AppendMenu(hmenu, MF_STRING | MF_ENABLED | (debugEnabled ? MF_CHECKED : 0),
-               ID_ENABLE_DEBUG_LOG, L"开启调试");
-  ::AppendMenu(hmenu, MF_STRING | MF_ENABLED, ID_SHOW_DEBUG_LOGS,
-               L"打开日志");
-  ::AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
-  ::AppendMenu(hmenu, MF_STRING | MF_ENABLED, ID_RESTART_Moqi_BACKENDS,
-               L"重启墨奇引擎");
-  ::AppendMenu(hmenu, MF_STRING | MF_ENABLED, ID_EXIT_Moqi,
-               L"退出墨奇引擎");
-
-  ::SetForegroundWindow(hwnd_);
-  ::TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, pos.x, pos.y, 0,
-                   hwnd_, NULL);
-  ::DestroyMenu(hmenu);
 }
 
 bool PipeServer::isCloudClipboardEnabled() const {
@@ -855,8 +714,8 @@ void PipeServer::runGuiThread() {
     }
   }
 
-  createShellNotifyIcon();
-
+  // 不再创建托盘图标：入口全部在语言栏菜单（后端下发、经代理由
+  // handleLauncherCommand 执行）。窗口本身保留，单实例/退出/剪贴板监听都依赖它。
   MSG msg;
   while (::GetMessage(&msg, NULL, 0, 0)) {
     ::TranslateMessage(&msg);
@@ -874,7 +733,6 @@ void PipeServer::runGuiThread() {
              });
     clipboardAsync_ = nullptr;
   }
-  destroyShellNotifyIcon();
 }
 
 } // namespace Moqi

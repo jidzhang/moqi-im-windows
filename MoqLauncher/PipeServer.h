@@ -32,7 +32,6 @@
 #include <vector>
 #include <unordered_map>
 #include <queue>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include "BackendServer.h"
@@ -66,8 +65,9 @@ public:
 		return logger_;
 	}
 
-	void enqueueTrayNotification(const std::wstring& title, const std::wstring& message,
-	                             DWORD infoFlags);
+	// 语言栏菜单里的启动器级命令（调试开关 / 重启引擎 / 退出引擎）由后端菜单下发，
+	// 请求经本进程代理，这里就地执行（BackendServer::handleClientMessage 调用）。
+	void handleLauncherCommand(uint32_t commandId);
 
 	BackendServer* backendFromLangProfileGuid(const char* guid);
 
@@ -85,12 +85,7 @@ private:
 	LPCTSTR registerWndClass(WNDCLASSEX& wndClass) const;
 	LRESULT wndProc(UINT msg, WPARAM wp, LPARAM lp);
 	void requestShutdown();
-	void createShellNotifyIcon();
-	void destroyShellNotifyIcon();
-	void showPopupMenu() const;
-	void showTrayNotification(const std::wstring& title, const std::wstring& message,
-	                         DWORD infoFlags);
-	void flushTrayNotifications();
+	void toggleDebugLog();
 	void onClipboardUpdate();
 	void initClipboardAsync();
 	void scheduleClipboardUpload(std::string utf8Text);
@@ -104,10 +99,8 @@ private:
 	void initInputMethods(const std::wstring& topDirPath);
 	void scheduleBackendPrewarm();
 	void prewarmBackends();
-	void asyncRestartAllBackends();
-    void restartAllBackends();
-    void asyncTerminateAllBackends();
-    void terminateAllBackends();
+	void restartAllBackends();
+	void terminateAllBackends();
 
 	// main pipe server
 	void initDataDir();
@@ -147,15 +140,7 @@ private:
 	HWND hwnd_; // handle of the window
 	static wchar_t wndClassName_[];
 	static constexpr UINT WM_CLIPBOARDUPDATE_MSG = WM_CLIPBOARDUPDATE;
-	NOTIFYICONDATA shellNotifyIconData_;
 	bool shutdownRequested_;
-	struct TrayNotificationRequest {
-		std::wstring title;
-		std::wstring message;
-		DWORD infoFlags;
-	};
-	std::deque<TrayNotificationRequest> trayNotifications_;
-	std::mutex trayNotificationsMutex_;
 
 	uv_async_t *clipboardAsync_;
 	std::mutex clipboardMutex_;
