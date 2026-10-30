@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PROTOBUF_VERSION: "33.5"
+  PROTOBUF_VERSION: "36.2"
 
 jobs:
   build-release:
