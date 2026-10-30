@@ -169,7 +169,7 @@ jobs:
               -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/octet-stream' }
             $len = (Get-Item -LiteralPath $outPath).Length
             if ($len -ne $asset.size) {
-              throw "gram size mismatch for $name: got $len, expected $($asset.size)"
+              throw "gram size mismatch for ${name}: got $len, expected $($asset.size)"
             }
           }
 
