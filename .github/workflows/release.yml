@@ -112,12 +112,6 @@ jobs:
             moqi-im-windows/build-vs64/_deps
           key: cmake-deps-${{ env.PROTOBUF_VERSION }}-v1
 
-      - name: Cache grammar model
-        uses: actions/cache@v4
-        with:
-          path: moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
-          key: gram-zh-hans-t-essay-bgw-20260712
-
       - name: Build installer
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
@@ -127,47 +121,105 @@ jobs:
             -ProtobufRoot "$env:PROTOBUF_ROOT" `
             -Version "${{ steps.version.outputs.version }}"
 
-      - name: Download grammar model
+      - name: Cache frozen gram assets
+        uses: actions/cache@v4
+        with:
+          # essay(206MB)/wanxiang(398MB) 两个大模型确定不再修改，缓存省下载。
+          # 一旦替换这两个文件，手动把 key 的 v1 递增。
+          path: |
+            moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
+            moqi-im-windows/installer/dist/wanxiang-lts-zh-hans.gram
+          key: gram-frozen-v1
+
+      - name: Fetch built-in gram assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          # full 包内置的大语法模型不在仓库里（196.8MB，gitignore），从官方
-          # 上游 release 固定 tag 下载；大小校验防半截文件。
-          $gramDir = Join-Path $env:GITHUB_WORKSPACE "moqi-im-windows\installer\dist"
-          $gramPath = Join-Path $gramDir "zh-hans-t-essay-bgw.gram"
-          if ((Test-Path -LiteralPath $gramPath) -and (Get-Item -LiteralPath $gramPath).Length -eq 206396460) {
-            Write-Host "grammar model cache hit"
-          } else {
-            Invoke-WebRequest `
-              -Uri "https://github.com/lotem/rime-octagram-data/releases/download/20260712/zh-hans-t-essay-bgw.gram" `
-              -OutFile $gramPath
-            $len = (Get-Item -LiteralPath $gramPath).Length
-            if ($len -ne 206396460) {
-              throw "Grammar model size mismatch: got $len, expected 206396460"
+          # 内置语法模型不在仓库里（均 gitignore）：统一从本仓内部 release
+          # gram-assets 取（draft，用户侧不可见）。按 API 报告的 size 校验
+          # 落盘长度，不硬编码字节数——std/dummy/wiki 三个后续可能更新。
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $gramDir = Join-Path $env:GITHUB_WORKSPACE 'moqi-im-windows/installer/dist'
+          New-Item -ItemType Directory -Force -Path $gramDir | Out-Null
+
+          $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GH_REPO/releases?per_page=100" `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $assetRelease = $releases | Where-Object { $_.tag_name -eq 'gram-assets' } | Select-Object -First 1
+          if (-not $assetRelease) { throw "Internal release 'gram-assets' not found" }
+
+          $wanted = @(
+            'zh-moqi.gram',
+            'zh-moqi-dummy.gram',
+            'zh-moqi-wiki.gram',
+            'zh-hans-t-essay-bgw.gram',
+            'wanxiang-lts-zh-hans.gram'
+          )
+          foreach ($name in $wanted) {
+            $asset = $assetRelease.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+            if (-not $asset) { throw "gram asset missing from gram-assets: $name" }
+            $outPath = Join-Path $gramDir $name
+            if ((Test-Path -LiteralPath $outPath) -and ((Get-Item -LiteralPath $outPath).Length -eq $asset.size)) {
+              Write-Host "gram cache hit: $name"
+              continue
+            }
+            Write-Host "downloading $name ($($asset.size) bytes)"
+            Invoke-WebRequest -Uri $asset.url -OutFile $outPath `
+              -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/octet-stream' }
+            $len = (Get-Item -LiteralPath $outPath).Length
+            if ($len -ne $asset.size) {
+              throw "gram size mismatch for $name: got $len, expected $($asset.size)"
             }
           }
 
-      - name: Build lite installer
+      - name: Build all installer tiers
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
-          # 各包必须共用 _all_in_package.ps1 生成的同一个 stage，
-          # 只靠 -OutputName / -ExcludeBuild / -GramPath 区分。
-          # full 档 2026-10-24 恢复（有用户索要内置 gram 的整句增强包）；
-          # 真人画像实测其对混打场景无增益的结论仍成立（14-交接 §九）。
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
-            -StageDir .\installer\stage `
-            -OutputName moqi-im-windows-setup-lite `
-            -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*,moqi-ime\input_methods\rime\data\zh-moqi.gram'
+          # 五档共用 _all_in_package.ps1 生成的同一个 stage，只靠
+          # -OutputName / -ExcludeBuild / -GramPath 区分。与本地
+          # _all_local_packages.ps1 必须同构：改一处要同步另一处。
+          $version = "${{ steps.version.outputs.version }}"
+          $dist = 'installer/dist'
+          $bi = './installer/build-installer.ps1'
+          $grams = @{
+            std      = Join-Path $dist 'zh-moqi.gram'
+            dummy    = Join-Path $dist 'zh-moqi-dummy.gram'
+            wiki     = Join-Path $dist 'zh-moqi-wiki.gram'
+            essay    = Join-Path $dist 'zh-hans-t-essay-bgw.gram'
+            wanxiang = Join-Path $dist 'wanxiang-lts-zh-hans.gram'
+          }
 
-      - name: Build standard and full installers
-        working-directory: ${{ github.workspace }}/moqi-im-windows
-        run: |
-          # 标准包（无 gram）+ full 包（内置大语法模型）共用同一 stage。
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
-            -StageDir .\installer\stage `
-            -OutputName moqi-im-windows-setup
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
-            -StageDir .\installer\stage `
-            -OutputName moqi-im-windows-setup-full `
-            -GramPath .\installer\dist\zh-hans-t-essay-bgw.gram
+          # 标准档：内置轻量长句增强（v1.7.0 起）
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
+            -StageDir ./installer/stage -OutputName moqi-im-windows-setup `
+            -GramPath $grams.std -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'standard tier failed' }
+
+          # lite 档：1KB dummy gram（BeamSearch 开关，无内容）
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
+            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-lite `
+            -ExcludeBuild 'moqi-ime/input_methods/rime/data/build/*' `
+            -GramPath $grams.dummy -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'lite tier failed' }
+
+          # wiki 档：书面语/百科风格的长句增强
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
+            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-wiki `
+            -GramPath $grams.wiki -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'wiki tier failed' }
+
+          # essay 档：八股文长句增强（原 full 档，v1.7.0 改名）
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
+            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-essay `
+            -GramPath $grams.essay -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'essay tier failed' }
+
+          # wanxiang 档：万象语法模型
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
+            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-wanxiang `
+            -GramPath $grams.wanxiang -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'wanxiang tier failed' }
 
       - name: Verify embedded version
         working-directory: ${{ github.workspace }}/moqi-im-windows
@@ -189,9 +241,10 @@ jobs:
         run: |
           $assets = @(
             "installer\dist\moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-wiki-${{ steps.version.outputs.version }}.exe",
             "installer\dist\moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\moqi-im-windows-setup-full-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\zh-hans-t-essay-bgw.gram"
+            "installer\dist\moqi-im-windows-setup-essay-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-wanxiang-${{ steps.version.outputs.version }}.exe"
           )
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset)) {
@@ -211,9 +264,10 @@ jobs:
           name: moqi-im-windows-${{ steps.version.outputs.tag }}
           path: |
             moqi-im-windows/installer/dist/moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-wiki-${{ steps.version.outputs.version }}.exe
             moqi-im-windows/installer/dist/moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe
-            moqi-im-windows/installer/dist/moqi-im-windows-setup-full-${{ steps.version.outputs.version }}.exe
-            moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-essay-${{ steps.version.outputs.version }}.exe
+            moqi-im-windows/installer/dist/moqi-im-windows-setup-wanxiang-${{ steps.version.outputs.version }}.exe
             moqi-im-windows/installer/dist/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -230,9 +284,10 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $assets = @(
             "installer\dist\moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-wiki-${{ steps.version.outputs.version }}.exe",
             "installer\dist\moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\moqi-im-windows-setup-full-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\zh-hans-t-essay-bgw.gram",
+            "installer\dist\moqi-im-windows-setup-essay-${{ steps.version.outputs.version }}.exe",
+            "installer\dist\moqi-im-windows-setup-wanxiang-${{ steps.version.outputs.version }}.exe",
             "installer\dist\SHA256SUMS.txt"
           )
           foreach ($asset in $assets) {

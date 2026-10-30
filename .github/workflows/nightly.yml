@@ -73,6 +73,46 @@ jobs:
             -MoqiImeRoot "$env:GITHUB_WORKSPACE\moqi-ime" `
             -ProtobufRoot "$env:PROTOBUF_ROOT"
 
+      - name: Fetch built-in gram assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 与 release.yml 同源：内置语法模型统一从内部 release gram-assets
+          # 取（draft，用户侧不可见），按 API size 校验落盘长度。
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $gramDir = Join-Path $env:GITHUB_WORKSPACE 'moqi-im-windows/installer/dist'
+          New-Item -ItemType Directory -Force -Path $gramDir | Out-Null
+
+          $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GH_REPO/releases?per_page=100" `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $assetRelease = $releases | Where-Object { $_.tag_name -eq 'gram-assets' } | Select-Object -First 1
+          if (-not $assetRelease) { throw "Internal release 'gram-assets' not found" }
+
+          foreach ($name in @('zh-moqi.gram')) {
+            $asset = $assetRelease.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+            if (-not $asset) { throw "gram asset missing from gram-assets: $name" }
+            $outPath = Join-Path $gramDir $name
+            Invoke-WebRequest -Uri $asset.url -OutFile $outPath `
+              -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/octet-stream' }
+            $len = (Get-Item -LiteralPath $outPath).Length
+            if ($len -ne $asset.size) {
+              throw "gram size mismatch for $name: got $len, expected $($asset.size)"
+            }
+          }
+
+      - name: Rebuild standard installer with gram
+        working-directory: ${{ github.workspace }}/moqi-im-windows
+        run: |
+          # _all_in_package 产出的标准包不带 gram；与 release 口径对齐，
+          # 用 9MB zh-moqi.gram 重打一次标准档。
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
+            -StageDir ./installer/stage `
+            -OutputName moqi-im-windows-setup `
+            -GramPath ./installer/dist/zh-moqi.gram
+          if ($LASTEXITCODE -ne 0) { throw 'standard tier rebuild failed' }
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
