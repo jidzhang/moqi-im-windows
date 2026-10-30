@@ -146,7 +146,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "nightly"
-          $assetPath = Join-Path $PWD "installer\dist\moqi-im-windows-setup.exe"
+          # build-installer 会把产物改名为带版本号（setup-<ver>.exe），
+          # 直接找无版本号的文件会 no matches found；这里取最新的匹配文件，
+          # 复制成稳定文件名后再上传，保证 release 资产名固定、每次覆盖。
+          $built = Get-ChildItem -LiteralPath (Join-Path $PWD "installer\dist") -Filter "moqi-im-windows-setup*.exe" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $built) { throw "No built installer found in installer\dist" }
+          Write-Host "Using built installer: $($built.FullName) ($($built.Length) bytes)"
+          $assetPath = Join-Path $env:RUNNER_TEMP "moqi-im-windows-setup.exe"
+          Copy-Item -LiteralPath $built.FullName -Destination $assetPath -Force
           $notesPath = Join-Path $env:RUNNER_TEMP "nightly-notes.md"
           $runUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
 
@@ -169,8 +177,11 @@ jobs:
 
           if (-not [string]::IsNullOrWhiteSpace($existingTag)) {
             gh release upload $tag $assetPath --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
             gh release edit $tag --title "Nightly" --notes-file $notesPath
+            if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
           }
           else {
             gh release create $tag $assetPath --title "Nightly" --notes-file $notesPath --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           }
