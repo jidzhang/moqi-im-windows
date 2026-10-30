@@ -59,7 +59,7 @@ add_dependencies(MoqiLauncher moqi_proto_cpp_gen)
 set_target_properties(MoqiLauncher PROPERTIES OUTPUT_NAME MoqiLaunch)
 
 target_link_libraries(MoqiLauncher 
-    jsoncpp_lib_static
+    jsoncpp_static
     ${MOQI_PROTOBUF_TARGET}
     Rpcrt4 # for uuid stuff
     libuv

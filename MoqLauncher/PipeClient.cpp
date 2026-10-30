@@ -18,6 +18,7 @@
 //
 
 #include "PipeClient.h"
+#include <codecvt> // utf8 conversion: was pulled in transitively by protobuf 33.5 headers; explicit since 36.2
 #include "PipeServer.h"
 #include "Utils.h"
 #include "BackendServer.h"

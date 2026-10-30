@@ -87,7 +87,7 @@ set(ABSL_MSVC_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.2.1
+    GIT_TAG v1.17.0
 )
 
 FetchContent_MakeAvailable(spdlog)
@@ -111,7 +111,7 @@ else()
     set(protobuf_LOCAL_DEPENDENCIES_ONLY OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(
         protobuf
-        URL https://github.com/protocolbuffers/protobuf/releases/download/v33.5/protobuf-33.5.zip
+        URL https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protobuf-36.2.zip
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(protobuf)

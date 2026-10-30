@@ -43,5 +43,5 @@ add_dependencies(MoqiTextService moqi_proto_cpp_gen)
 target_link_libraries(MoqiTextService
     libIME2_static
     ${MOQI_PROTOBUF_TARGET}
-    jsoncpp_lib_static
+    jsoncpp_static
 )
