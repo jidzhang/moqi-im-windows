@@ -77,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: moqi-im-windows-nightly-${{ github.sha }}
-          path: ${{ github.workspace }}/moqi-im-windows/installer/dist/moqi-im-windows-setup.exe
+          path: ${{ github.workspace }}/moqi-im-windows/installer/dist/moqi-im-windows-setup-*.exe
           if-no-files-found: error
 
       - name: Publish nightly release
