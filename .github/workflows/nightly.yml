@@ -49,6 +49,26 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
 
+      - name: Cache CMake third-party deps
+        uses: actions/cache@v4
+        with:
+          # 与 release.yml 同口径：protobuf/abseil 等 _deps 全量编译约 15 分钟，
+          # 缓存后夜间构建降到数分钟。key 里带 PROTOBUF_VERSION，
+          # 升依赖即自动换 key（旧缓存不命中，不会串版）。
+          path: |
+            moqi-im-windows/build-vs32/_deps
+            moqi-im-windows/build-vs64/_deps
+          key: cmake-deps-${{ env.PROTOBUF_VERSION }}-v1
+
+      - name: Cache frozen gram assets
+        uses: actions/cache@v4
+        with:
+          # 与 release.yml 共用同一份缓存（essay/wanxiang 大模型不再修改）
+          path: |
+            moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
+            moqi-im-windows/installer/dist/wanxiang-lts-zh-hans.gram
+          key: gram-frozen-v1
+
       - name: Download protoc
         run: |
           $protocRoot = Join-Path $env:RUNNER_TEMP "protoc-$env:PROTOBUF_VERSION-win64"
