@@ -138,7 +138,7 @@ jobs:
         run: |
           # 内置语法模型不在仓库里（均 gitignore）：统一从本仓内部 release
           # gram-assets 取（draft，用户侧不可见）。按 API 报告的 size 校验
-          # 落盘长度，不硬编码字节数——std/dummy/wiki 三个后续可能更新。
+          # 落盘长度，不硬编码字节数——std/lite/wiki 三个后续可能更新。
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
           $gramDir = Join-Path $env:GITHUB_WORKSPACE 'moqi-im-windows/installer/dist'
@@ -151,7 +151,7 @@ jobs:
 
           $wanted = @(
             'zh-moqi.gram',
-            'zh-moqi-dummy.gram',
+            'zh-moqi-lite.gram',
             'zh-moqi-wiki.gram',
             'zh-hans-t-essay-bgw.gram',
             'wanxiang-lts-zh-hans.gram'
@@ -184,7 +184,7 @@ jobs:
           $bi = './installer/build-installer.ps1'
           $grams = @{
             std      = Join-Path $dist 'zh-moqi.gram'
-            dummy    = Join-Path $dist 'zh-moqi-dummy.gram'
+            lite     = Join-Path $dist 'zh-moqi-lite.gram'
             wiki     = Join-Path $dist 'zh-moqi-wiki.gram'
             essay    = Join-Path $dist 'zh-hans-t-essay-bgw.gram'
             wanxiang = Join-Path $dist 'wanxiang-lts-zh-hans.gram'
@@ -196,13 +196,13 @@ jobs:
             -GramPath $grams.std -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'standard tier failed' }
 
-          # lite 档：1KB dummy gram（BeamSearch 开关，无内容）
+          # lite 档：1.1MB essay 裁剪 gram（top-10 万高频词对，延续增强）
           # Excludes 里的路径必须用反斜杠（Inno 的 [Files] Excludes 按 Windows 分隔符匹配，
           # 正斜杠不生效 → 预编译词库缓存剔不掉，lite 白胖 40MB）。
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
             -StageDir ./installer/stage -OutputName moqi-im-windows-setup-lite `
             -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
-            -GramPath $grams.dummy -Version $version
+            -GramPath $grams.lite -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'lite tier failed' }
 
           # wiki 档：书面语/百科风格的长句增强

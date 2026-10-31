@@ -85,13 +85,13 @@ if (-not (Test-Path -LiteralPath $StdGram)) { throw "standard gram not found: $S
     -OutputName "moqi-im-windows-setup" `
     -GramPath $StdGram
 
-Write-Host "== Tier 2/5: lite (1KB dummy gram: BeamSearch switch, no content) =="
-$DummyGram = Join-Path $RepoRoot "installer\dist\zh-moqi-dummy.gram"
-if (-not (Test-Path -LiteralPath $DummyGram)) { throw "dummy gram not found: $DummyGram" }
+Write-Host "== Tier 2/5: lite (1.1MB essay-crop gram: top-100k pairs) =="
+$LiteGram = Join-Path $RepoRoot "installer\dist\zh-moqi-lite.gram"
+if (-not (Test-Path -LiteralPath $LiteGram)) { throw "lite gram not found: $LiteGram" }
 & $buildInstaller -StageDir $stageDir `
     -OutputName "moqi-im-windows-setup-lite" `
     -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
-    -GramPath $DummyGram
+    -GramPath $LiteGram
 
 Write-Host "== Tier 3/5: essay =="
 & $buildInstaller -StageDir $stageDir `
