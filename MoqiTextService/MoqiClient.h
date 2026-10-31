@@ -33,6 +33,7 @@
 #include <string>
 #include <vector>
 #include <json/json.h>
+#include "LocalEngine.h"
 #include "proto/moqi.pb.h"
 
 namespace Moqi {
@@ -90,6 +91,12 @@ public:
 	void onCompositionTerminated(bool forced);
 
 private:
+    // 架构重构阶段1：热键路径优先走进程内引擎（见 23-架构重构文档）。
+    // engaged 后本 Client 的按键/候选操作不再发管道 RPC；任何初始化失败
+    // 都会让该进程一直停留在 RPC 回退路径。
+    bool maybeEngageLocalEngine();
+    static void requestLocalEngineInit(TextService* service);
+
     static std::wstring getPipeName(const wchar_t* base_name);
     HANDLE connectPipe(const wchar_t* pipeName, int timeoutMs);
     bool ensureLauncherRunning();
@@ -157,6 +164,7 @@ private:
 	bool asyncFlushInProgress_;
 	std::deque<Json::Value> pendingAsyncResponses_;
 	std::vector<AutoPairRuleState> autoPairRules_;
+	LocalEngine localEngine_;
 };
 
 }

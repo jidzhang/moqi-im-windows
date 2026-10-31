@@ -518,7 +518,7 @@ Client::Client(TextService *service, REFIID langProfileGuid)
       lastLauncherStartAttemptTick_{0}, lastLauncherKillTick_{0},
       asyncPollTimerWindow_(nullptr),
       asyncPollTimerId_(0), asyncFlushInProgress_(false),
-      autoPairRules_(defaultAutoPairRules()) {}
+      autoPairRules_(defaultAutoPairRules()), localEngine_(service) {}
 
 Client::~Client(void) {
   if (asyncPollTimerId_ != 0) {
@@ -536,6 +536,7 @@ Client::~Client(void) {
     buttons_.clear();
   }
   closeRpcConnection();
+  localEngine_.deactivate();
   resetTextServiceState();
   LangBarButton::clearIconCache();
 }
@@ -1040,6 +1041,36 @@ void Client::updateCandidateList(Json::Value &msg, Ime::EditSession *session) {
 }
 
 // handlers for the text service
+
+// Kick the process-wide rime runtime init (background thread; never blocks
+// the TSF callback). Idempotent, cheap, and a no-op on x86 or when
+// MOQI_LOCAL_ENGINE=0.
+void Client::requestLocalEngineInit(TextService *service) {
+  RimeRuntime &runtime = RimeRuntime::instance();
+  if (!runtime.supported() || runtime.ready() || runtime.failed()) {
+    return;
+  }
+  auto module =
+      static_cast<Moqi::ImeModule *>(service->imeModule().operator->());
+  if (module == nullptr || module->programDir().empty() ||
+      module->backendDirs().empty()) {
+    return;
+  }
+  runtime.requestInit(module->programDir(), module->backendDirs().front());
+}
+
+// Try to take over the key path with the in-process engine. Only when the
+// runtime is ready and no composition/candidates/async responses are in
+// flight, so the RPC session never hands over half-finished state.
+bool Client::maybeEngageLocalEngine() {
+  RimeRuntime &runtime = RimeRuntime::instance();
+  if (!runtime.supported() || localEngine_.active() ||
+      !pendingAsyncResponses_.empty()) {
+    return false;
+  }
+  return localEngine_.tryEngage();
+}
+
 void Client::onActivate() {
   activationInProgress_.store(true, std::memory_order_release);
   // Use a much smaller connection budget during TSF activation. At logon the
@@ -1060,12 +1091,15 @@ void Client::onActivate() {
   activationInProgress_.store(false, std::memory_order_release);
   isActivated_ = true;
   connectAttempts_ = MAX_CONNECT_ATTEMPTS;
+  // 阶段1：激活即后台初始化进程内引擎，首个空闲按键点完成接管。
+  requestLocalEngineInit(textService_);
 }
 
 void Client::onDeactivate() {
   // Fire-and-forget: never block the app's TSF thread waiting for a reply to
   // a notification (e.g. when the backend is hung at boot).
   sendRpcNoWait("onDeactivate");
+  localEngine_.deactivate();
   LangBarButton::clearIconCache();
   isActivated_ = false;
 }
@@ -1097,6 +1131,18 @@ bool Client::waitForRpcIdleForFirstKey() const {
 }
 
 bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
+  // 阶段1：进程内引擎优先；接管点要求无组字/无候选/无在途异步响应。
+  maybeEngageLocalEngine();
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.filterKeyDown(keyEvent, ret)) {
+      ret["success"] = true;
+      handleRpcResponse(ret);
+      return ret["return"].asBool();
+    }
+    appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
+    return false;
+  }
   if (isOrdinaryPrintableKey(keyEvent) &&
       !waitForRpcIdleForFirstKey()) {
     // 等不到空闲也不能吃键（2026-10-30 用户定调"必须解决，别家输入法从不丢"）：
@@ -1139,6 +1185,20 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
 }
 
 bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.onKeyDown(keyEvent, ret)) {
+      ret["success"] = true;
+      handleRpcResponse(ret, session);
+      return ret["return"].asBool();
+    }
+    if (isOrdinaryPrintableKey(keyEvent)) {
+      appendRpcGuardLog(L"[onKeyDown] local engine failed after filter "
+                        L"consumed the key; key lost vk=" +
+                        std::to_wstring(keyEvent.keyCode()));
+    }
+    return false;
+  }
   auto req = createRpcRequest("onKeyDown");
   addKeyEventToRpcRequest(req, keyEvent);
 
@@ -1159,6 +1219,15 @@ bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
 }
 
 bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.filterKeyUp(keyEvent, ret)) {
+      ret["success"] = true;
+      handleRpcResponse(ret);
+      return ret["return"].asBool();
+    }
+    return false;
+  }
   auto req = createRpcRequest("filterKeyUp");
   addKeyEventToRpcRequest(req, keyEvent);
 
@@ -1171,6 +1240,15 @@ bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
 }
 
 bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.onKeyUp(keyEvent, ret)) {
+      ret["success"] = true;
+      handleRpcResponse(ret, session);
+      return ret["return"].asBool();
+    }
+    return false;
+  }
   auto req = createRpcRequest("onKeyUp");
   addKeyEventToRpcRequest(req, keyEvent);
 
@@ -1185,6 +1263,14 @@ bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
 }
 
 bool Client::highlightCandidate(int index) {
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.highlightCandidate(index, ret)) {
+      ret["success"] = true;
+      return applyAsyncResponse(ret);
+    }
+    return false;
+  }
   auto req = createRpcRequest("highlightCandidate");
   req.set_candidate_index(index);
 
@@ -1196,6 +1282,14 @@ bool Client::highlightCandidate(int index) {
 }
 
 bool Client::selectCandidate(int index) {
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.selectCandidate(index, ret)) {
+      ret["success"] = true;
+      return applyAsyncResponse(ret);
+    }
+    return false;
+  }
   auto req = createRpcRequest("selectCandidate");
   req.set_candidate_index(index);
 
@@ -1207,6 +1301,14 @@ bool Client::selectCandidate(int index) {
 }
 
 bool Client::changePage(bool backward) {
+  if (localEngine_.active()) {
+    Json::Value ret;
+    if (localEngine_.changePage(backward, ret)) {
+      ret["success"] = true;
+      return applyAsyncResponse(ret);
+    }
+    return false;
+  }
   auto req = createRpcRequest("changePage");
   req.set_page_backward(backward);
 
@@ -1373,6 +1475,9 @@ void Client::onKeyboardStatusChanged(bool opened) {
 
 // called just before current composition is terminated for doing cleanup.
 void Client::onCompositionTerminated(bool forced) {
+  if (localEngine_.active()) {
+    localEngine_.onCompositionTerminated(forced);
+  }
   auto req = createRpcRequest("onCompositionTerminated");
   req.set_forced(forced);
 

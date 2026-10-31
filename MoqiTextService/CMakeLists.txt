@@ -30,6 +30,10 @@ add_library(MoqiTextService SHARED
     MoqiCandidateWindow.h
     MoqiClient.cpp
     MoqiClient.h
+    LocalEngine.cpp
+    LocalEngine.h
+    LocalRerank.cpp
+    LocalRerank.h
     MoqiLangBarButton.cpp
     MoqiLangBarButton.h
     DllEntry.cpp
