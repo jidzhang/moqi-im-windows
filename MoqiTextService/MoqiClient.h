@@ -19,7 +19,9 @@
 
 #ifndef _Moqi_CLIENT_H_
 #define _Moqi_CLIENT_H_
+#ifndef NDEBUG
 #define NDEBUG
+#endif
 #include <libIME2/src/TextService.h>
 #include <libIME2/src/KeyEvent.h>
 #include <libIME2/src/EditSession.h>

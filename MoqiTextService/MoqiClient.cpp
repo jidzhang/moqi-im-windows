@@ -18,6 +18,7 @@
 //
 
 #include "MoqiClient.h"
+#include "KeyGuardLog.h"
 #include "libIME2/src/Utils.h"
 #include "libIME2/src/DebugLogConfig.h"
 #include "../proto/ProtoFraming.h"
@@ -50,7 +51,10 @@ static constexpr int FIRST_PRINTABLE_KEY_RPC_WAIT_MS = 200;
 // 旧的 200ms 超时会把键静默吃掉（"第一个字母丢失"）。激活路径本身有
 // ~1s 的预算（见 Client::onActivate 的 ACTIVATION_CONNECT_ATTEMPTS），
 // 首键等待与之对齐：宁可顿一下，也不丢字（对齐搜狗/微软拼音的行为）。
-static constexpr int FIRST_PRINTABLE_KEY_ACTIVATION_WAIT_MS = 1500;
+// 2026-10-30 提到 10s：1.5s 只盖住常规激活（实测 ~110ms），盖不住冷启动
+// （启动器被拉起 + 后端 init/部署，实测可达 5~14s，开机首切/退出引擎后
+// 首键都会走到）。预热让这个长等待极少发生，发生时宁可 UI 顿一下。
+static constexpr int FIRST_PRINTABLE_KEY_ACTIVATION_WAIT_MS = 10000;
 static constexpr DWORD RPC_BUSY_POLL_INTERVAL_MS = 5;
 // Timeout for writing one request into the pipe. The 64KB pipe buffer accepts
 // a request immediately unless the backend is completely stuck, so this only
@@ -92,18 +96,20 @@ bool isOrdinaryPrintableKey(Ime::KeyEvent &keyEvent) {
   return true;
 }
 
+} // namespace
+
+// 放在匿名命名空间外：MoqiTextService.cpp 也要写按键异常日志（见 KeyGuardLog.h）。
 std::wstring rpcGuardLogPath() {
   const wchar_t *localAppData = _wgetenv(L"LOCALAPPDATA");
   if (!localAppData || !*localAppData) {
     return L"";
   }
-  return std::wstring(localAppData) + L"\\MoqiIM\\Log\\tsf-debug.log";
+  // 独立于 tsf-debug.log（那是 trace 档全量日志）：这里只记按键被放行/异常
+  // 这类低频事件，无条件常开——默认 error 档下问题复现时才留得下证据。
+  return std::wstring(localAppData) + L"\\MoqiIM\\Log\\tsf-key-guard.log";
 }
 
 void appendRpcGuardLog(const std::wstring &message) {
-  if (!Ime::isTraceLoggingEnabled()) {
-    return;
-  }
   const std::wstring logPath = rpcGuardLogPath();
   if (logPath.empty()) {
     return;
@@ -120,8 +126,12 @@ void appendRpcGuardLog(const std::wstring &message) {
   if (!stream.is_open()) {
     return;
   }
-  stream << L"[" << timestamp << L"] " << message << L"\n";
+  stream << L"[" << timestamp << "] " << message << L"\n";
 }
+
+// 其余文件内辅助函数回到匿名命名空间（内部链接），只有上面的按键异常日志
+// 需要 MoqiTextService.cpp 共用。
+namespace {
 
 class ScopedRpcInProgress {
 public:
@@ -228,7 +238,6 @@ bool shouldAutoPairSymbol(const std::wstring &commitString,
   }
   return false;
 }
-
 
 } // namespace
 
@@ -1090,8 +1099,10 @@ bool Client::waitForRpcIdleForFirstKey() const {
 bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   if (isOrdinaryPrintableKey(keyEvent) &&
       !waitForRpcIdleForFirstKey()) {
+    // 等不到空闲也不能吃键（2026-10-30 用户定调"必须解决，别家输入法从不丢"）：
+    // 放行直通，字母以英文上屏——可见、可删，好过凭空消失。
     std::wostringstream log;
-    log << L"[filterKeyDown] RPC busy timeout; consume printable key"
+    log << L"[filterKeyDown] busy timeout; pass printable key through"
         << L" vk=" << keyEvent.keyCode()
         << L" char=" << keyEvent.charCode()
         << L" waited_ms="
@@ -1103,7 +1114,7 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
         << L" rpc_in_progress="
         << rpcInProgress_.load(std::memory_order_acquire);
     appendRpcGuardLog(log.str());
-    return true;
+    return false;
   }
 
   auto req = createRpcRequest("filterKeyDown");
@@ -1115,13 +1126,14 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
     return ret["return"].asBool();
   }
   if (isOrdinaryPrintableKey(keyEvent)) {
+    // RPC 硬失败（管道断/连接耗尽/应答坏）同样不吃键：直通，留痕。
     std::wostringstream log;
-    log << L"[filterKeyDown] RPC failed or invalid response; consume printable key"
+    log << L"[filterKeyDown] rpc failed; pass printable key through"
         << L" vk=" << keyEvent.keyCode()
         << L" char=" << keyEvent.charCode()
         << L" rpc_ok=" << (rpcOk ? L"true" : L"false");
     appendRpcGuardLog(log.str());
-    return true;
+    return false;
   }
   return false;
 }
@@ -1136,6 +1148,12 @@ bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
     refreshAsyncPollTimer();
     flushPendingAsyncResponses(session);
     return ret["return"].asBool();
+  }
+  // 键已被 filterKeyDown 消费，这里失败即丢字，无法补救（拿不到可靠的直通机会），
+  // 至少无条件留痕，配合 tsf-key-guard.log 定位。
+  if (isOrdinaryPrintableKey(keyEvent)) {
+    appendRpcGuardLog(L"[onKeyDown] rpc failed after filter consumed the key; "
+                      L"key lost vk=" + std::to_wstring(keyEvent.keyCode()));
   }
   return false;
 }

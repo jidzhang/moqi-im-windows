@@ -18,6 +18,7 @@
 //
 
 #include "MoqiTextService.h"
+#include "KeyGuardLog.h"
 #include <assert.h>
 #include <string>
 #include <algorithm>
@@ -555,8 +556,10 @@ bool TextService::filterKeyDown(Ime::KeyEvent& keyEvent) {
 	//	return true;
 	if (!client_ && !ensureClientForCurrentProfile(L"filterKeyDown")) {
 		if (isOrdinaryPrintableKey(keyEvent)) {
-			logDebug(L"[filterKeyDown] consumed printable key while client is not ready " + keyEventSummary(keyEvent));
-			return true;
+			// 客户端建不起来也不能吃键（2026-10-30）：直通，字母以英文上屏并留痕。
+			appendRpcGuardLog(L"[filterKeyDown] client not ready; pass printable key through vk=" +
+				std::to_wstring(keyEvent.keyCode()) + L" char=" + std::to_wstring(keyEvent.charCode()));
+			return false;
 		}
 		return false;
 	}
