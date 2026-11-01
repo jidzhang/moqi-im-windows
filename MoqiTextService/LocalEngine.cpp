@@ -393,10 +393,11 @@ void writeFileUtf8(const wstring& path, const string& content) {
 }
 
 // Builds the in-proc rime_frost.custom.yaml: the backend's generated patch
-// (engine behavior parity: grammar, typo edges, mixed-input learning rules)
-// plus user-dict disables — the in-proc dir is shared by every app process
-// and concurrent LevelDB opens are unsupported (phase 3 makes the Helper the
-// sole writer; until then typing quality runs on fixed dicts only).
+// (engine behavior parity: grammar, typo edges, mixed-input learning rules).
+// 阶段3（2026-11-01）：用户词典开启。实测 rime userdb（leveldb 封装）在本
+// 构建上锁文件不互斥——多进程并发开同一库可写、数据合并无损（试验台
+// udbtest 双进程交叉提交验证，见 24-交接）。进程内学习即时生效，跨进程
+// 学习在对方下次启动时可见。
 string buildInProcCustomPatch(const wstring& backendUserDir) {
   const string backendPatch =
       readFileUtf8(backendUserDir + L"\\rime_frost.custom.yaml");
@@ -415,8 +416,6 @@ string buildInProcCustomPatch(const wstring& backendUserDir) {
       body += '\n';
     }
   }
-  body += "  \"translator/enable_user_dict\": false\n";
-  body += "  \"melt_eng/enable_user_dict\": false\n";
   return body;
 }
 
@@ -556,6 +555,16 @@ void RimeRuntime::requestInit(const wstring& programDir,
     const wstring patchPath = userDir + L"\\rime_frost.custom.yaml";
     if (readFileUtf8(patchPath) != patch) {
       writeFileUtf8(patchPath, patch);
+    }
+
+    // 阶段3种子：RimeInProc 首次启用用户词典时，把后端已积累的学习数据
+    // 带过来（leveldb 拷贝中的撕裂由打开时的 recovery 自愈）。
+    const wstring srcUserDb = backendUserDir + L"\\rime_frost.userdb";
+    const wstring dstUserDb = userDir + L"\\rime_frost.userdb";
+    if (!filesystem::exists(dstUserDb) && filesystem::exists(srcUserDb)) {
+      error_code copyEc;
+      filesystem::copy(srcUserDb, dstUserDb,
+                       filesystem::copy_options::recursive, copyEc);
     }
 
     // Cross-process gate: only one app process runs the first deployment
