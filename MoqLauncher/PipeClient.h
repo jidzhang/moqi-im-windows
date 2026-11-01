@@ -24,7 +24,7 @@
 #include <memory>
 #include <cstdint>
 #include "BackendServer.h"
-#include "proto/moqi.pb.h"
+#include <json/json.h>
 #include "../proto/ProtoFraming.h"
 
 #include <spdlog/spdlog.h>
@@ -63,7 +63,7 @@ public:
         pipe_.write(data, len);
     }
 
-	bool initBackend(const moqi::protocol::ClientRequest& params);
+	bool initBackend(const Json::Value& params);
 
 	void disconnectFromBackend();
 

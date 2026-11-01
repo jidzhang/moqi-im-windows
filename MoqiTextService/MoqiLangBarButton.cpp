@@ -117,6 +117,13 @@ void LangBarButton::updateFromJson(const Json::Value& info) {
 	if (typeValue.isString()) {
 		DWORD newStyle = style() & ~(TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_BTN_TOGGLE);
 		std::string type = typeValue.asString();
+		// protojson emits symbolic enum names (BUTTON_TYPE_BUTTON ...).
+		if (type.rfind("BUTTON_TYPE_", 0) == 0) {
+			type = type.substr(12);
+			if (!type.empty()) {
+				type[0] = static_cast<char>(tolower(type[0]));
+			}
+		}
 		if (type == "button")
 			newStyle |= TF_LBI_STYLE_BTN_BUTTON;
 		else if (type == "toggle")

@@ -22,7 +22,6 @@
 #include "libIME2/src/Utils.h"
 #include "libIME2/src/DebugLogConfig.h"
 #include "../proto/ProtoFraming.h"
-#include "proto/moqi.pb.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -241,236 +240,41 @@ bool shouldAutoPairSymbol(const std::wstring &commitString,
 
 } // namespace
 
-static moqi::protocol::Method methodNameToProto(const char *methodName) {
+static const char* methodNameToJson(const char* methodName) {
+  // proto3 JSON symbolic names; Go decodes via protojson.
   if (strcmp(methodName, "init") == 0)
-    return moqi::protocol::METHOD_INIT;
+    return "METHOD_INIT";
   if (strcmp(methodName, "onActivate") == 0)
-    return moqi::protocol::METHOD_ON_ACTIVATE;
+    return "METHOD_ON_ACTIVATE";
   if (strcmp(methodName, "onDeactivate") == 0)
-    return moqi::protocol::METHOD_ON_DEACTIVATE;
+    return "METHOD_ON_DEACTIVATE";
   if (strcmp(methodName, "filterKeyDown") == 0)
-    return moqi::protocol::METHOD_FILTER_KEY_DOWN;
+    return "METHOD_FILTER_KEY_DOWN";
   if (strcmp(methodName, "onKeyDown") == 0)
-    return moqi::protocol::METHOD_ON_KEY_DOWN;
+    return "METHOD_ON_KEY_DOWN";
   if (strcmp(methodName, "filterKeyUp") == 0)
-    return moqi::protocol::METHOD_FILTER_KEY_UP;
+    return "METHOD_FILTER_KEY_UP";
   if (strcmp(methodName, "onKeyUp") == 0)
-    return moqi::protocol::METHOD_ON_KEY_UP;
+    return "METHOD_ON_KEY_UP";
   if (strcmp(methodName, "onPreservedKey") == 0)
-    return moqi::protocol::METHOD_ON_PRESERVED_KEY;
+    return "METHOD_ON_PRESERVED_KEY";
   if (strcmp(methodName, "onCommand") == 0)
-    return moqi::protocol::METHOD_ON_COMMAND;
+    return "METHOD_ON_COMMAND";
   if (strcmp(methodName, "onMenu") == 0)
-    return moqi::protocol::METHOD_ON_MENU;
+    return "METHOD_ON_MENU";
   if (strcmp(methodName, "onCompartmentChanged") == 0)
-    return moqi::protocol::METHOD_ON_COMPARTMENT_CHANGED;
+    return "METHOD_ON_COMPARTMENT_CHANGED";
   if (strcmp(methodName, "onKeyboardStatusChanged") == 0)
-    return moqi::protocol::METHOD_ON_KEYBOARD_STATUS_CHANGED;
+    return "METHOD_ON_KEYBOARD_STATUS_CHANGED";
   if (strcmp(methodName, "onCompositionTerminated") == 0)
-    return moqi::protocol::METHOD_ON_COMPOSITION_TERMINATED;
+    return "METHOD_ON_COMPOSITION_TERMINATED";
   if (strcmp(methodName, "highlightCandidate") == 0)
-    return moqi::protocol::METHOD_HIGHLIGHT_CANDIDATE;
+    return "METHOD_HIGHLIGHT_CANDIDATE";
   if (strcmp(methodName, "selectCandidate") == 0)
-    return moqi::protocol::METHOD_SELECT_CANDIDATE;
+    return "METHOD_SELECT_CANDIDATE";
   if (strcmp(methodName, "changePage") == 0)
-    return moqi::protocol::METHOD_CHANGE_PAGE;
-  return moqi::protocol::METHOD_UNSPECIFIED;
-}
-
-static Json::Value menuItemsToJson(
-    const google::protobuf::RepeatedPtrField<moqi::protocol::MenuItem> &items) {
-  Json::Value result(Json::arrayValue);
-  for (const auto &item : items) {
-    Json::Value jsonItem;
-    if (item.separator()) {
-      jsonItem["id"] = 0;
-      jsonItem["text"] = "";
-    } else {
-      jsonItem["id"] = item.id();
-      jsonItem["text"] = item.text();
-      jsonItem["checked"] = item.checked();
-      jsonItem["enabled"] = item.enabled();
-    }
-    if (!item.submenu().empty()) {
-      jsonItem["submenu"] = menuItemsToJson(item.submenu());
-    }
-    result.append(jsonItem);
-  }
-  return result;
-}
-
-static Json::Value customizeUiToJson(const moqi::protocol::CustomizeUi &ui) {
-  Json::Value result;
-  if (ui.has_cand_font_name())
-    result["candFontName"] = ui.cand_font_name();
-  if (ui.has_cand_comment_font_name())
-    result["candCommentFontName"] = ui.cand_comment_font_name();
-  if (ui.has_cand_font_size())
-    result["candFontSize"] = ui.cand_font_size();
-  if (ui.has_cand_comment_font_size())
-    result["candCommentFontSize"] = ui.cand_comment_font_size();
-  if (ui.has_cand_per_row())
-    result["candPerRow"] = ui.cand_per_row();
-  if (ui.has_cand_spacing())
-    result["candSpacing"] = ui.cand_spacing();
-  if (ui.has_cand_use_cursor())
-    result["candUseCursor"] = ui.cand_use_cursor();
-  if (ui.has_inline_preedit())
-    result["inlinePreedit"] = ui.inline_preedit();
-  if (ui.has_cand_background_color())
-    result["candBackgroundColor"] = ui.cand_background_color();
-  if (ui.has_cand_highlight_color())
-    result["candHighlightColor"] = ui.cand_highlight_color();
-  if (ui.has_cand_text_color())
-    result["candTextColor"] = ui.cand_text_color();
-  if (ui.has_cand_highlight_text_color())
-    result["candHighlightTextColor"] = ui.cand_highlight_text_color();
-  if (ui.has_cand_comment_color())
-    result["candCommentColor"] = ui.cand_comment_color();
-  if (ui.has_cand_comment_highlight_color())
-    result["candCommentHighlightColor"] = ui.cand_comment_highlight_color();
-  if (ui.has_auto_pair_quotes())
-    result["autoPairQuotes"] = ui.auto_pair_quotes();
-  if (ui.auto_pair_rules_size() > 0) {
-    Json::Value rules(Json::arrayValue);
-    for (const auto &rule : ui.auto_pair_rules()) {
-      Json::Value item;
-      item["open"] = rule.open();
-      item["close"] = rule.close();
-      rules.append(item);
-    }
-    result["autoPairRules"] = rules;
-  }
-  if (ui.has_semicolon_select_second())
-    result["semicolonSelectSecond"] = ui.semicolon_select_second();
-  return result;
-}
-
-static Json::Value buttonInfoToJson(const moqi::protocol::ButtonInfo &button) {
-  Json::Value result;
-  result["id"] = button.id();
-  if (!button.icon().empty())
-    result["icon"] = button.icon();
-  if (!button.text().empty())
-    result["text"] = button.text();
-  if (!button.tooltip().empty())
-    result["tooltip"] = button.tooltip();
-  if (button.command_id() != 0)
-    result["commandId"] = button.command_id();
-  switch (button.type()) {
-  case moqi::protocol::BUTTON_TYPE_BUTTON:
-    result["type"] = "button";
-    break;
-  case moqi::protocol::BUTTON_TYPE_TOGGLE:
-    result["type"] = "toggle";
-    break;
-  case moqi::protocol::BUTTON_TYPE_MENU:
-    result["type"] = "menu";
-    break;
-  default:
-    break;
-  }
-  result["enable"] = button.enable();
-  result["toggled"] = button.toggled();
-  if (button.has_style())
-    result["style"] = button.style();
-  return result;
-}
-
-static Json::Value responseToJson(const moqi::protocol::ServerResponse &response) {
-  Json::Value result;
-  result["success"] = response.success();
-  result["seqNum"] = response.seq_num();
-  result["return"] = response.return_value();
-  result["compositionString"] = response.composition_string();
-  result["showCandidates"] = response.show_candidates();
-  result["cursorPos"] = response.cursor_pos();
-  result["compositionCursor"] = response.composition_cursor();
-  if (response.has_candidate_cursor()) {
-    result["candidateCursor"] = response.candidate_cursor();
-  }
-  result["selStart"] = response.sel_start();
-  result["selEnd"] = response.sel_end();
-
-  Json::Value candidateList(Json::arrayValue);
-  for (const auto &candidate : response.candidate_list()) {
-    candidateList.append(candidate);
-  }
-  result["candidateList"] = candidateList;
-  if (!response.candidate_entries().empty()) {
-    Json::Value candidateEntries(Json::arrayValue);
-    for (const auto &candidate : response.candidate_entries()) {
-      Json::Value item;
-      item["text"] = candidate.text();
-      if (!candidate.comment().empty())
-        item["comment"] = candidate.comment();
-      candidateEntries.append(item);
-    }
-    result["candidateEntries"] = candidateEntries;
-  }
-
-  if (!response.menu_items().empty()) {
-    result["return"] = menuItemsToJson(response.menu_items());
-  }
-  if (!response.commit_string().empty())
-    result["commitString"] = response.commit_string();
-  if (!response.set_sel_keys().empty())
-    result["setSelKeys"] = response.set_sel_keys();
-  if (response.has_customize_ui())
-    result["customizeUI"] = customizeUiToJson(response.customize_ui());
-  if (response.has_show_message()) {
-    Json::Value message;
-    message["message"] = response.show_message().message();
-    message["duration"] = response.show_message().duration();
-    result["showMessage"] = message;
-  }
-  if (response.hide_message())
-    result["hideMessage"] = true;
-  if (response.open_keyboard())
-    result["openKeyboard"] = true;
-
-  if (!response.add_button().empty()) {
-    Json::Value addButtons(Json::arrayValue);
-    for (const auto &button : response.add_button()) {
-      addButtons.append(buttonInfoToJson(button));
-    }
-    result["addButton"] = addButtons;
-  }
-  if (!response.remove_button().empty()) {
-    Json::Value removeButtons(Json::arrayValue);
-    for (const auto &buttonId : response.remove_button()) {
-      removeButtons.append(buttonId);
-    }
-    result["removeButton"] = removeButtons;
-  }
-  if (!response.change_button().empty()) {
-    Json::Value changeButtons(Json::arrayValue);
-    for (const auto &button : response.change_button()) {
-      changeButtons.append(buttonInfoToJson(button));
-    }
-    result["changeButton"] = changeButtons;
-  }
-  if (!response.add_preserved_key().empty()) {
-    Json::Value preservedKeys(Json::arrayValue);
-    for (const auto &item : response.add_preserved_key()) {
-      Json::Value key;
-      key["keyCode"] = item.key_code();
-      key["modifiers"] = item.modifiers();
-      key["guid"] = item.guid();
-      preservedKeys.append(key);
-    }
-    result["addPreservedKey"] = preservedKeys;
-  }
-  if (!response.remove_preserved_key().empty()) {
-    Json::Value preservedKeys(Json::arrayValue);
-    for (const auto &guid : response.remove_preserved_key()) {
-      preservedKeys.append(guid);
-    }
-    result["removePreservedKey"] = preservedKeys;
-  }
-  if (!response.error().empty())
-    result["error"] = response.error();
-  return result;
+    return "METHOD_CHANGE_PAGE";
+  return "METHOD_UNSPECIFIED";
 }
 
 static std::string uuidToString(const UUID &uuid) {
@@ -543,18 +347,21 @@ Client::~Client(void) {
 
 // pack a keyEvent object into a json value
 // static
-void Client::addKeyEventToRpcRequest(moqi::protocol::ClientRequest &request,
+void Client::addKeyEventToRpcRequest(Json::Value &request,
                                      Ime::KeyEvent &keyEvent) {
-  auto *protoKeyEvent = request.mutable_key_event();
-  protoKeyEvent->set_char_code(keyEvent.charCode());
-  protoKeyEvent->set_key_code(keyEvent.keyCode());
-  protoKeyEvent->set_repeat_count(keyEvent.repeatCount());
-  protoKeyEvent->set_scan_code(keyEvent.scanCode());
-  protoKeyEvent->set_is_extended(keyEvent.isExtended());
-  const BYTE *states = keyEvent.keyStates();
+  Json::Value keyEvent2(Json::objectValue);
+  keyEvent2["charCode"] = keyEvent.charCode();
+  keyEvent2["keyCode"] = keyEvent.keyCode();
+  keyEvent2["repeatCount"] = keyEvent.repeatCount();
+  keyEvent2["scanCode"] = keyEvent.scanCode();
+  keyEvent2["isExtended"] = keyEvent.isExtended();
+  Json::Value states(Json::arrayValue);
+  const BYTE *keyStates = keyEvent.keyStates();
   for (int i = 0; i < 256; ++i) {
-    protoKeyEvent->add_key_states(states[i]);
+    states.append(keyStates[i]);
   }
+  keyEvent2["keyStates"] = states;
+  request["keyEvent"] = keyEvent2;
 }
 
 bool Client::handleRpcResponse(Json::Value &msg, Ime::EditSession *session) {
@@ -920,7 +727,7 @@ void Client::updateStatus(Json::Value &msg, Ime::EditSession *session) {
 
   // show message
   bool endComposition = false;
-  const auto &customizeUIVal = msg["customizeUI"];
+  const Json::Value customizeUIVal = msg.get("customizeUi", msg["customizeUI"]);
   if (customizeUIVal.isObject()) {
     updateUI(customizeUIVal);
   }
@@ -1082,7 +889,7 @@ void Client::onActivate() {
   // waitForRpcConnection() on the first key press instead.
   connectAttempts_ = ACTIVATION_CONNECT_ATTEMPTS;
   auto req = createRpcRequest("onActivate");
-  req.set_is_keyboard_open(textService_->isKeyboardOpened());
+  req["isKeyboardOpen"] = textService_->isKeyboardOpened();
 
   Json::Value ret;
   callRpcMethod(req, ret);
@@ -1138,7 +945,7 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
     if (localEngine_.filterKeyDown(keyEvent, ret)) {
       ret["success"] = true;
       handleRpcResponse(ret);
-      return ret["return"].asBool();
+      return ret["returnValue"].asBool();
     }
     appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
     return false;
@@ -1169,7 +976,7 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   Json::Value ret;
   const bool rpcOk = callRpcMethod(req, ret);
   if (rpcOk && handleRpcResponse(ret)) {
-    return ret["return"].asBool();
+    return ret["returnValue"].asBool();
   }
   if (isOrdinaryPrintableKey(keyEvent)) {
     // RPC 硬失败（管道断/连接耗尽/应答坏）同样不吃键：直通，留痕。
@@ -1190,7 +997,7 @@ bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
     if (localEngine_.onKeyDown(keyEvent, ret)) {
       ret["success"] = true;
       handleRpcResponse(ret, session);
-      return ret["return"].asBool();
+      return ret["returnValue"].asBool();
     }
     if (isOrdinaryPrintableKey(keyEvent)) {
       appendRpcGuardLog(L"[onKeyDown] local engine failed after filter "
@@ -1207,7 +1014,7 @@ bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
   if (handleRpcResponse(ret, session)) {
     refreshAsyncPollTimer();
     flushPendingAsyncResponses(session);
-    return ret["return"].asBool();
+    return ret["returnValue"].asBool();
   }
   // 键已被 filterKeyDown 消费，这里失败即丢字，无法补救（拿不到可靠的直通机会），
   // 至少无条件留痕，配合 tsf-key-guard.log 定位。
@@ -1224,7 +1031,7 @@ bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
     if (localEngine_.filterKeyUp(keyEvent, ret)) {
       ret["success"] = true;
       handleRpcResponse(ret);
-      return ret["return"].asBool();
+      return ret["returnValue"].asBool();
     }
     return false;
   }
@@ -1234,7 +1041,7 @@ bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
   Json::Value ret;
   callRpcMethod(req, ret);
   if (handleRpcResponse(ret)) {
-    return ret["return"].asBool();
+    return ret["returnValue"].asBool();
   }
   return false;
 }
@@ -1245,7 +1052,7 @@ bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
     if (localEngine_.onKeyUp(keyEvent, ret)) {
       ret["success"] = true;
       handleRpcResponse(ret, session);
-      return ret["return"].asBool();
+      return ret["returnValue"].asBool();
     }
     return false;
   }
@@ -1257,7 +1064,7 @@ bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
   if (handleRpcResponse(ret, session)) {
     refreshAsyncPollTimer();
     flushPendingAsyncResponses(session);
-    return ret["return"].asBool();
+    return ret["returnValue"].asBool();
   }
   return false;
 }
@@ -1272,7 +1079,7 @@ bool Client::highlightCandidate(int index) {
     return false;
   }
   auto req = createRpcRequest("highlightCandidate");
-  req.set_candidate_index(index);
+  req["candidateIndex"] = index;
 
   Json::Value ret;
   if (!callRpcMethod(req, ret)) {
@@ -1291,7 +1098,7 @@ bool Client::selectCandidate(int index) {
     return false;
   }
   auto req = createRpcRequest("selectCandidate");
-  req.set_candidate_index(index);
+  req["candidateIndex"] = index;
 
   Json::Value ret;
   if (!callRpcMethod(req, ret)) {
@@ -1310,7 +1117,7 @@ bool Client::changePage(bool backward) {
     return false;
   }
   auto req = createRpcRequest("changePage");
-  req.set_page_backward(backward);
+  req["pageBackward"] = backward;
 
   Json::Value ret;
   if (!callRpcMethod(req, ret)) {
@@ -1327,12 +1134,12 @@ bool Client::onPreservedKey(const GUID &guid, Ime::EditSession *session) {
   auto guidStr = uuidToString(guid);
   if (!guidStr.empty()) {
     auto req = createRpcRequest("onPreservedKey");
-    req.set_preserved_key_guid(guidStr);
+    req["preservedKeyGuid"] = guidStr;
 
     Json::Value ret;
     callRpcMethod(req, ret);
     if (session != nullptr ? handleRpcResponse(ret, session) : handleRpcResponse(ret)) {
-      return ret["return"].asBool();
+      return ret["returnValue"].asBool();
     }
   }
   return false;
@@ -1340,20 +1147,20 @@ bool Client::onPreservedKey(const GUID &guid, Ime::EditSession *session) {
 
 bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
   auto req = createRpcRequest("onCommand");
-  req.set_command_id(id);
-  req.set_command_type(type);
+  req["commandId"] = id;
+  req["commandType"] = static_cast<int>(type);
 
   Json::Value ret;
   callRpcMethod(req, ret);
   if (handleRpcResponse(ret)) {
-    return ret["return"].asBool();
+    return ret["returnValue"].asBool();
   }
   return false;
 }
 
 bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
   auto req = createRpcRequest("onMenu");
-  req.set_button_id(button_id);
+  req["buttonId"] = button_id;
 
   callRpcMethod(req, result);
   if (handleRpcResponse(result)) {
@@ -1401,7 +1208,7 @@ static bool menuFromJson(ITfMenu *pMenu, const Json::Value &menuInfo) {
 bool Client::onMenu(LangBarButton *btn, ITfMenu *pMenu) {
   Json::Value result;
   if (sendOnMenu(btn->id(), result)) {
-    Json::Value &menuInfo = result["return"];
+    const Json::Value &menuInfo = result["menuItems"];
     return menuFromJson(pMenu, menuInfo);
   }
   return false;
@@ -1442,7 +1249,7 @@ static HMENU menuFromJson(const Json::Value &menuInfo) {
 HMENU Client::onMenu(LangBarButton *btn) {
   Json::Value result;
   if (sendOnMenu(btn->id(), result)) {
-    Json::Value &menuInfo = result["return"];
+    const Json::Value &menuInfo = result["menuItems"];
     return menuFromJson(menuInfo);
   }
   return NULL;
@@ -1453,7 +1260,7 @@ void Client::onCompartmentChanged(const GUID &key) {
   auto guidStr = uuidToString(key);
   if (!guidStr.empty()) {
     auto req = createRpcRequest("onCompartmentChanged");
-    req.set_compartment_guid(guidStr);
+    req["compartmentGuid"] = guidStr;
 
     Json::Value ret;
     callRpcMethod(req, ret);
@@ -1465,7 +1272,7 @@ void Client::onCompartmentChanged(const GUID &key) {
 // called when the keyboard is opened or closed
 void Client::onKeyboardStatusChanged(bool opened) {
   auto req = createRpcRequest("onKeyboardStatusChanged");
-  req.set_opened(opened);
+  req["opened"] = opened;
 
   Json::Value ret;
   callRpcMethod(req, ret);
@@ -1479,7 +1286,7 @@ void Client::onCompositionTerminated(bool forced) {
     localEngine_.onCompositionTerminated(forced);
   }
   auto req = createRpcRequest("onCompositionTerminated");
-  req.set_forced(forced);
+  req["forced"] = forced;
 
   Json::Value ret;
   callRpcMethod(req, ret);
@@ -1489,19 +1296,19 @@ void Client::onCompositionTerminated(bool forced) {
 
 bool Client::init() {
   auto req = createRpcRequest("init");
-  req.set_guid(guid_);
-  req.set_is_windows8_above(::IsWindows8OrGreater());
-  req.set_is_metro_app(textService_->isMetroApp());
-  req.set_is_ui_less(textService_->effectiveUiLess());
-  req.set_is_console(textService_->isConsole());
+  req["guid"] = guid_;
+  req["isWindows8Above"] = ::IsWindows8OrGreater();
+  req["isMetroApp"] = textService_->isMetroApp();
+  req["isUiLess"] = textService_->effectiveUiLess();
+  req["isConsole"] = textService_->isConsole();
 
   Json::Value ret;
   return callRpcMethod(req, ret) && handleRpcResponse(ret);
 }
 
-moqi::protocol::ClientRequest Client::createRpcRequest(const char *methodName) {
-  moqi::protocol::ClientRequest request;
-  request.set_method(methodNameToProto(methodName));
+Json::Value Client::createRpcRequest(const char *methodName) {
+  Json::Value request(Json::objectValue);
+  request["method"] = methodNameToJson(methodName);
   return request;
 }
 
@@ -1568,8 +1375,8 @@ bool Client::readPendingPipeMessage(std::string &serializedReply) {
   return readPipeMessageWithTimeout(pipe_, serializedReply, 250, nullptr);
 }
 
-void Client::enqueueAsyncResponse(const moqi::protocol::ServerResponse &response) {
-  pendingAsyncResponses_.push_back(responseToJson(response));
+void Client::enqueueAsyncResponse(const Json::Value &msg) {
+  pendingAsyncResponses_.push_back(msg);
 }
 
 bool Client::applyAsyncResponse(Json::Value &msg, Ime::EditSession *session) {
@@ -1634,12 +1441,12 @@ void Client::pollAsyncResponses() {
     responseBuffer.append(serializedResponse.data(), serializedResponse.size());
     std::string payload;
     while (responseBuffer.nextFrame(payload)) {
-      moqi::protocol::ServerResponse protoResponse;
-      if (!Proto::parsePayload(payload, protoResponse)) {
+      Json::Value msg;
+      if (!Proto::parseJsonPayload(payload, msg)) {
         closeRpcConnection();
         return;
       }
-      enqueueAsyncResponse(protoResponse);
+      enqueueAsyncResponse(msg);
     }
   }
 
@@ -1771,8 +1578,7 @@ bool Client::callRpcPipe(HANDLE pipe, const std::string &serializedRequest,
 
 // send the request to the server
 // a sequence number will be added to the req object automatically.
-bool Client::callRpcMethod(moqi::protocol::ClientRequest &request,
-                           Json::Value &response) {
+bool Client::callRpcMethod(Json::Value &request, Json::Value &response) {
   try {
     ScopedRpcInProgress rpcGuard(rpcInProgress_);
     if (shouldWaitConnection_ && !waitForRpcConnection(connectAttempts_)) {
@@ -1783,10 +1589,10 @@ bool Client::callRpcMethod(moqi::protocol::ClientRequest &request,
 
     // Add a sequence number for the request.
     auto seqNum = nextSeqNum_++;
-    request.set_seq_num(seqNum);
+    request["seqNum"] = seqNum;
 
     std::string serializedRequest;
-    if (!Proto::serializeMessage(request, serializedRequest)) {
+    if (!Proto::serializeJsonMessage(request, serializedRequest)) {
       return false;
     }
 
@@ -1798,18 +1604,18 @@ bool Client::callRpcMethod(moqi::protocol::ClientRequest &request,
         Proto::FrameBuffer responseBuffer;
         responseBuffer.append(serializedResponse.data(), serializedResponse.size());
         std::string payload;
-        moqi::protocol::ServerResponse protoResponse;
+        Json::Value msg;
         success = responseBuffer.nextFrame(payload) &&
-                  Proto::parsePayload(payload, protoResponse);
+                  Proto::parseJsonPayload(payload, msg);
         if (!success) {
           break;
         }
-        if (protoResponse.seq_num() == seqNum) {
-          response = responseToJson(protoResponse);
+        if (msg.get("seqNum", -1).asInt() == seqNum) {
+          response = msg;
           break;
         }
 
-        enqueueAsyncResponse(protoResponse);
+        enqueueAsyncResponse(msg);
         serializedResponse.clear();
         // The synchronous reply may arrive in a later pipe message than an
         // async notification; wait for it with a bounded timeout.
@@ -1925,7 +1731,7 @@ void Client::sendRpcNoWait(const char *methodName) {
   }
   auto req = createRpcRequest(methodName);
   std::string serializedRequest;
-  if (!Proto::serializeMessage(req, serializedRequest)) {
+  if (!Proto::serializeJsonMessage(req, serializedRequest)) {
     return;
   }
   // Fire-and-forget: a short bounded overlapped write so a stuck backend can

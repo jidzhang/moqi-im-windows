@@ -22,7 +22,7 @@
 #include "PipeServer.h"
 #include "Utils.h"
 #include "BackendServer.h"
-#include "proto/moqi.pb.h"
+#include <json/json.h>
 #include "../proto/ProtoFraming.h"
 
 using namespace std;
@@ -98,9 +98,9 @@ void PipeClient::handleClientMessage(const char* readBuf, size_t len) {
 
     std::string payload;
     while (readBuffer_.nextFrame(payload)) {
-        moqi::protocol::ClientRequest request;
-        if (!Proto::parsePayload(payload, request)) {
-            logger()->error("Failed to parse protobuf request from client {}", clientId_);
+        Json::Value request;
+        if (!Proto::parseJsonPayload(payload, request)) {
+            logger()->error("Failed to parse JSON request from client {}", clientId_);
             continue;
         }
 
@@ -115,10 +115,10 @@ void PipeClient::handleClientMessage(const char* readBuf, size_t len) {
     }
 }
 
-bool PipeClient::initBackend(const moqi::protocol::ClientRequest &params) {
-	if (params.method() == moqi::protocol::METHOD_INIT) {  // the client connects to us the first time
+bool PipeClient::initBackend(const Json::Value &params) {
+	if (params.get("method", "").asString() == "METHOD_INIT") {  // the client connects to us the first time
 		// find a backend for the client text service
-		const auto& guid = params.guid();
+		const auto guid = params.get("guid", "").asString();
 		backend_ = server_->backendFromLangProfileGuid(guid.c_str());
 		if (backend_ != nullptr) {
 			// FIXME: write some response to indicate the failure
@@ -133,8 +133,8 @@ bool PipeClient::initBackend(const moqi::protocol::ClientRequest &params) {
 
 void PipeClient::disconnectFromBackend() {
 	if (backend_ != nullptr) {
-		moqi::protocol::ClientRequest request;
-		request.set_method(moqi::protocol::METHOD_CLOSE);
+		Json::Value request(Json::objectValue);
+		request["method"] = "METHOD_CLOSE";
 		backend_->handleClientMessage(this, request);
 	}
 }

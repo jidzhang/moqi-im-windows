@@ -18,9 +18,6 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cxx_fl
 project(MoqiIMWindows LANGUAGES C CXX)
 
 include(FetchContent)
-set(MOQI_PROTOBUF_ROOT "" CACHE PATH "Optional local protobuf install root (contains bin/include)")
-set(MOQI_PROTOBUF_SOURCE_DIR "" CACHE PATH "Optional local protobuf source tree")
-set(MOQI_PROTOC_EXECUTABLE "" CACHE FILEPATH "Optional local protoc executable")
 
 # Load semantic version from version.txt.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" MOQI_VERSION)
@@ -74,16 +71,6 @@ set(LIBUV_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 
-set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_LIBUPB OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_PROTOBUF_BINARIES ON CACHE BOOL "" FORCE)
-set(protobuf_BUILD_PROTOC_BINARIES OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
-set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
-set(ABSL_MSVC_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
-
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -91,65 +78,6 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(spdlog)
-
-if(NOT MOQI_PROTOC_EXECUTABLE AND MOQI_PROTOBUF_ROOT AND EXISTS "${MOQI_PROTOBUF_ROOT}/bin/protoc.exe")
-    set(MOQI_PROTOC_EXECUTABLE "${MOQI_PROTOBUF_ROOT}/bin/protoc.exe")
-endif()
-
-if(MOQI_PROTOBUF_SOURCE_DIR)
-    # Local protobuf source trees used by developers may already vendor abseil.
-    # Keep protobuf in local-only mode for that case.
-    set(protobuf_LOCAL_DEPENDENCIES_ONLY ON CACHE BOOL "" FORCE)
-    if(EXISTS "${MOQI_PROTOBUF_SOURCE_DIR}/third_party/abseil-cpp/CMakeLists.txt" AND NOT TARGET absl::strings)
-        add_subdirectory("${MOQI_PROTOBUF_SOURCE_DIR}/third_party/abseil-cpp" "${CMAKE_BINARY_DIR}/abseil")
-    endif()
-    add_subdirectory("${MOQI_PROTOBUF_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/protobuf")
-    set(MOQI_PROTOBUF_INCLUDE_DIR "${MOQI_PROTOBUF_SOURCE_DIR}/src")
-    set(MOQI_PROTOBUF_ABSL_INCLUDE_DIR "${MOQI_PROTOBUF_SOURCE_DIR}/third_party/abseil-cpp")
-else()
-    # CI often provides only protoc. Let protobuf fetch its own CMake deps.
-    set(protobuf_LOCAL_DEPENDENCIES_ONLY OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(
-        protobuf
-        URL https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protobuf-36.2.zip
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(protobuf)
-    set(MOQI_PROTOBUF_INCLUDE_DIR "${protobuf_SOURCE_DIR}/src")
-    set(MOQI_PROTOBUF_ABSL_INCLUDE_DIR "${protobuf_SOURCE_DIR}/third_party/abseil-cpp")
-endif()
-
-set(MOQI_GENERATED_PROTO_ROOT "${CMAKE_BINARY_DIR}/generated")
-set(MOQI_GENERATED_PROTO_DIR "${MOQI_GENERATED_PROTO_ROOT}/proto")
-set(MOQI_PROTO_SCHEMA "${CMAKE_CURRENT_SOURCE_DIR}/proto/moqi.proto")
-set(MOQI_PROTO_CPP "${MOQI_GENERATED_PROTO_DIR}/moqi.pb.cc")
-set(MOQI_PROTO_HDR "${MOQI_GENERATED_PROTO_DIR}/moqi.pb.h")
-file(TO_CMAKE_PATH "${MOQI_GENERATED_PROTO_ROOT}" MOQI_GENERATED_PROTO_ROOT_PROTOC)
-
-if(NOT MOQI_PROTOC_EXECUTABLE)
-    find_program(MOQI_PROTOC_EXECUTABLE NAMES protoc)
-endif()
-
-if(MOQI_PROTOC_EXECUTABLE)
-    add_custom_command(
-        OUTPUT "${MOQI_PROTO_CPP}" "${MOQI_PROTO_HDR}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${MOQI_GENERATED_PROTO_DIR}"
-        COMMAND "${MOQI_PROTOC_EXECUTABLE}" --proto_path=. "--cpp_out=${MOQI_GENERATED_PROTO_ROOT_PROTOC}" "proto/moqi.proto"
-        DEPENDS "${MOQI_PROTO_SCHEMA}"
-        COMMENT "Generating C++ protobuf sources for moqi.proto"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        VERBATIM
-    )
-    add_custom_target(moqi_proto_cpp_gen DEPENDS "${MOQI_PROTO_CPP}" "${MOQI_PROTO_HDR}")
-else()
-    message(FATAL_ERROR "Cannot find protoc. Set MOQI_PROTOC_EXECUTABLE or MOQI_PROTOBUF_ROOT to a local protoc installation.")
-endif()
-
-if(TARGET protobuf::libprotobuf)
-    set(MOQI_PROTOBUF_TARGET protobuf::libprotobuf)
-else()
-    set(MOQI_PROTOBUF_TARGET libprotobuf)
-endif()
 
 add_subdirectory("${PROJECT_SOURCE_DIR}/jsoncpp")
 

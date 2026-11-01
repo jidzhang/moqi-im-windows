@@ -40,7 +40,7 @@
 #include "PipeClient.h"
 #include "PipeServer.h"
 #include "../proto/ProtoFraming.h"
-#include "proto/moqi.pb.h"
+#include <json/json.h>
 
 using namespace std;
 
@@ -89,21 +89,22 @@ std::shared_ptr<spdlog::logger> &BackendServer::logger() {
 }
 
 void BackendServer::handleClientMessage(PipeClient *client,
-                                        const moqi::protocol::ClientRequest &request) {
+                                        const Json::Value &request) {
   if (!isProcessRunning()) {
     startProcess();
   }
 
-  if (request.method() == moqi::protocol::METHOD_INIT &&
-      !request.guid().empty()) {
+  const std::string method = request.get("method", "").asString();
+  const std::string guid = request.get("guid", "").asString();
+  if (method == "METHOD_INIT" && !guid.empty()) {
     // Remember the language profile GUID so we can warm up the backend.
-    lastInitGuid_ = request.guid();
+    lastInitGuid_ = guid;
   }
 
-  moqi::protocol::ClientRequest backendRequest = request;
-  backendRequest.set_client_id(client->clientId_);
+  Json::Value backendRequest = request;
+  backendRequest["clientId"] = client->clientId_;
   std::string framedMessage;
-  if (!Proto::serializeMessage(backendRequest, framedMessage)) {
+  if (!Proto::serializeJsonMessage(backendRequest, framedMessage)) {
     logger()->error("Failed to serialize backend request for client {}",
                     client->clientId_);
     return;
@@ -114,8 +115,8 @@ void BackendServer::handleClientMessage(PipeClient *client,
 
   // 语言栏菜单里的启动器级命令（调试/重启/退出）：请求照常转给后端（后端对这些
   // id 只回执），本进程就地执行。放在转发之后，后端的回执能先发出去。
-  if (request.method() == moqi::protocol::METHOD_ON_COMMAND) {
-    pipeServer_->handleLauncherCommand(request.command_id());
+  if (method == "METHOD_ON_COMMAND") {
+    pipeServer_->handleLauncherCommand(request.get("commandId", 0).asInt());
   }
 }
 
@@ -131,12 +132,12 @@ void BackendServer::uploadCloudClipboardText(const std::string& utf8Text) {
     return;
   }
 
-  moqi::protocol::ClientRequest request;
-  request.set_method(moqi::protocol::METHOD_CLOUD_CLIPBOARD_UPLOAD);
-  request.set_client_id("clipboard");
-  request.set_cloud_clipboard_text(utf8Text);
+  Json::Value request(Json::objectValue);
+  request["method"] = "METHOD_CLOUD_CLIPBOARD_UPLOAD";
+  request["clientId"] = "clipboard";
+  request["cloudClipboardText"] = utf8Text;
   std::string framedMessage;
-  if (!Proto::serializeMessage(request, framedMessage)) {
+  if (!Proto::serializeJsonMessage(request, framedMessage)) {
     logger()->error("Failed to serialize cloud clipboard upload");
     return;
   }
@@ -258,44 +259,47 @@ void BackendServer::sendWarmupRequests() {
   }
   logger()->info("Warming up backend {} (guid={})", name_, lastInitGuid_);
 
-  moqi::protocol::ClientRequest request;
-  request.set_client_id("warmup");
+  Json::Value request(Json::objectValue);
+  request["clientId"] = "warmup";
 
-  request.set_method(moqi::protocol::METHOD_INIT);
-  request.set_guid(lastInitGuid_);
-  request.set_is_windows8_above(true);
-  request.set_is_metro_app(false);
-  request.set_is_ui_less(true);
-  request.set_is_console(false);
+  request["method"] = "METHOD_INIT";
+  request["guid"] = lastInitGuid_;
+  request["isWindows8Above"] = true;
+  request["isMetroApp"] = false;
+  request["isUiLess"] = true;
+  request["isConsole"] = false;
   std::string framedMessage;
-  if (!Proto::serializeMessage(request, framedMessage)) {
+  if (!Proto::serializeJsonMessage(request, framedMessage)) {
     logger()->error("Failed to serialize warmup init request");
     return;
   }
   stdinPipe_->write(std::move(framedMessage));
 
-  request.set_method(moqi::protocol::METHOD_ON_ACTIVATE);
-  request.set_is_keyboard_open(true);
+  request["method"] = "METHOD_ON_ACTIVATE";
+  request["isKeyboardOpen"] = true;
   framedMessage.clear();
-  if (!Proto::serializeMessage(request, framedMessage)) {
+  if (!Proto::serializeJsonMessage(request, framedMessage)) {
     logger()->error("Failed to serialize warmup activate request");
     return;
   }
   stdinPipe_->write(std::move(framedMessage));
 
   // One harmless key press to trigger lazy dictionary loading / deferred UI.
-  request.set_method(moqi::protocol::METHOD_FILTER_KEY_DOWN);
-  auto *keyEvent = request.mutable_key_event();
-  keyEvent->set_char_code('a');
-  keyEvent->set_key_code(0x41);
-  keyEvent->set_scan_code(0);
-  keyEvent->set_repeat_count(1);
-  keyEvent->set_is_extended(false);
+  request["method"] = "METHOD_FILTER_KEY_DOWN";
+  Json::Value keyEvent(Json::objectValue);
+  keyEvent["charCode"] = static_cast<Json::UInt>('a');
+  keyEvent["keyCode"] = 0x41;
+  keyEvent["scanCode"] = 0;
+  keyEvent["repeatCount"] = 1;
+  keyEvent["isExtended"] = false;
+  Json::Value keyStates(Json::arrayValue);
   for (int i = 0; i < 256; ++i) {
-    keyEvent->add_key_states(0);
+    keyStates.append(0);
   }
+  keyEvent["keyStates"] = keyStates;
+  request["keyEvent"] = keyEvent;
   framedMessage.clear();
-  if (!Proto::serializeMessage(request, framedMessage)) {
+  if (!Proto::serializeJsonMessage(request, framedMessage)) {
     logger()->error("Failed to serialize warmup key request");
     return;
   }
@@ -382,22 +386,23 @@ void BackendServer::closeStdioPipes() {
 void BackendServer::handleBackendReply() {
   std::string payload;
   while (stdoutFrameBuf_.nextFrame(payload)) {
-    moqi::protocol::ServerResponse response;
-    if (!Proto::parsePayload(payload, response)) {
-      logger()->error("Failed to parse protobuf response from backend {}", name_);
+    Json::Value response;
+    if (!Proto::parseJsonPayload(payload, response)) {
+      logger()->error("Failed to parse JSON response from backend {}", name_);
       continue;
     }
 
-    if (response.client_id().empty()) {
+    const std::string clientId = response.get("clientId", "").asString();
+    if (clientId.empty()) {
       logger()->warn("Ignoring backend response without client_id from {}", name_);
       continue;
     }
 
-    if (response.client_id() == "clipboard") {
+    if (clientId == "clipboard") {
       continue;
     }
 
-    if (auto client = pipeServer_->clientFromId(response.client_id())) {
+    if (auto client = pipeServer_->clientFromId(clientId)) {
       const auto framedPayload = Proto::framePayload(payload);
       client->writePipe(framedPayload.data(), framedPayload.size());
     }

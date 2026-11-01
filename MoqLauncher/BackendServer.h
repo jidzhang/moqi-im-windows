@@ -35,7 +35,7 @@
 #include <spdlog/spdlog.h>
 
 #include "UvPipe.h"
-#include "proto/moqi.pb.h"
+#include <json/json.h>
 #include "../proto/ProtoFraming.h"
 
 namespace Moqi {
@@ -65,7 +65,7 @@ public:
 
 	std::shared_ptr<spdlog::logger>& logger();
 
-	void handleClientMessage(PipeClient* client, const moqi::protocol::ClientRequest& request);
+	void handleClientMessage(PipeClient* client, const Json::Value& request);
 
 	void uploadCloudClipboardText(const std::string& utf8Text);
 

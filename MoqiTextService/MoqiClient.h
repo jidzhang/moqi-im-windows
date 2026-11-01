@@ -34,7 +34,6 @@
 #include <vector>
 #include <json/json.h>
 #include "LocalEngine.h"
-#include "proto/moqi.pb.h"
 
 namespace Moqi {
 
@@ -103,8 +102,8 @@ private:
     bool isLauncherProcessRunning();
     bool forceRestartLauncher();
 
-    moqi::protocol::ClientRequest createRpcRequest(const char* methodName);
-	bool callRpcMethod(moqi::protocol::ClientRequest& request, Json::Value& response);
+    Json::Value createRpcRequest(const char* methodName);
+	bool callRpcMethod(Json::Value& request, Json::Value& response);
     void sendRpcNoWait(const char* methodName);
 
     bool isPipeCreatedByMoqiServer(HANDLE pipe);
@@ -118,7 +117,7 @@ private:
 	bool readPendingPipeMessage(std::string& serializedReply);
 	void refreshAsyncPollTimer();
 	void pollAsyncResponses();
-	void enqueueAsyncResponse(const moqi::protocol::ServerResponse& response);
+    void enqueueAsyncResponse(const Json::Value& msg);
 	void flushPendingAsyncResponsesWithCurrentContext();
 	void flushPendingAsyncResponses(Ime::EditSession* session = nullptr);
 	bool applyAsyncResponse(Json::Value& msg, Ime::EditSession* session = nullptr);
@@ -128,7 +127,7 @@ private:
 	bool init();
     void resetTextServiceState();
 
-	void addKeyEventToRpcRequest(moqi::protocol::ClientRequest& request, Ime::KeyEvent& keyEvent);
+    void addKeyEventToRpcRequest(Json::Value& request, Ime::KeyEvent& keyEvent);
     bool sendOnMenu(std::string button_id, Json::Value& result);
 
     bool handleRpcResponse(Json::Value& msg, Ime::EditSession* session = nullptr);

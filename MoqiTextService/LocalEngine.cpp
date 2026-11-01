@@ -1132,7 +1132,7 @@ bool LocalEngine::handleSecondSelectionFilterDown(Ime::KeyEvent& e,
     return false;
   }
   secondSelectConsumeKeyUpCode_ = selectionShortcutConsumeCode(e);
-  resp["return"] = 1;
+  resp["returnValue"] = 1;
   return true;
 }
 
@@ -1146,7 +1146,7 @@ bool LocalEngine::handleSecondSelectionDown(Ime::KeyEvent& e,
   const EngineState state = currentState(&engineOk);
   if (!engineOk || state.composition.empty() || state.candidates.size() < 2) {
     buildResponse(state, false, resp);
-    resp["return"] = 1;
+    resp["returnValue"] = 1;
     return true;
   }
   RimeRuntime& runtime = RimeRuntime::instance();
@@ -1155,11 +1155,11 @@ bool LocalEngine::handleSecondSelectionDown(Ime::KeyEvent& e,
     const EngineState after = currentState(&ok);
     buildResponse(after, true, resp);
     appendLangStatusChange(resp, after.asciiMode, after.fullShape);
-    resp["return"] = 1;
+    resp["returnValue"] = 1;
     return true;
   }
   buildResponse(state, false, resp);
-  resp["return"] = 1;
+  resp["returnValue"] = 1;
   return true;
 }
 
@@ -1169,7 +1169,7 @@ bool LocalEngine::handleSecondSelectionFilterUp(Ime::KeyEvent& e,
       selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
     return false;
   }
-  resp["return"] = 1;
+  resp["returnValue"] = 1;
   return true;
 }
 
@@ -1183,7 +1183,7 @@ bool LocalEngine::handleSecondSelectionUp(Ime::KeyEvent& e,
   bool engineOk = false;
   const EngineState state = currentState(&engineOk);
   buildResponse(state, false, resp);
-  resp["return"] = 1;
+  resp["returnValue"] = 1;
   return true;
 }
 
@@ -1216,7 +1216,7 @@ bool LocalEngine::filterKeyDown(Ime::KeyEvent& e, Json::Value& resp) {
     }
   }
   lastKeyUpCode_ = 0;
-  resp["return"] = lastKeyDownRet_ ? 1 : 0;
+  resp["returnValue"] = lastKeyDownRet_ ? 1 : 0;
   return true;
 }
 
@@ -1228,18 +1228,18 @@ bool LocalEngine::onKeyDown(Ime::KeyEvent& e, Json::Value& resp) {
     return true;
   }
   if (shouldPassThroughModifierOnKey(e, lastKeyDownRet_)) {
-    resp["return"] = 0;
+    resp["returnValue"] = 0;
     return true;
   }
   bool engineOk = false;
   const EngineState state = currentState(&engineOk);
   if (!engineOk) {
-    resp["return"] = 0;
+    resp["returnValue"] = 0;
     return true;
   }
   buildResponse(state, true, resp);
   appendLangStatusChange(resp, state.asciiMode, state.fullShape);
-  resp["return"] = 1;
+  resp["returnValue"] = 1;
   return true;
 }
 
@@ -1270,7 +1270,7 @@ bool LocalEngine::filterKeyUp(Ime::KeyEvent& e, Json::Value& resp) {
   }
   lastKeyDownCode_ = 0;
   lastKeySkip_ = 0;
-  resp["return"] = lastKeyUpRet_ ? 1 : 0;
+  resp["returnValue"] = lastKeyUpRet_ ? 1 : 0;
   return true;
 }
 
@@ -1282,18 +1282,18 @@ bool LocalEngine::onKeyUp(Ime::KeyEvent& e, Json::Value& resp) {
     return true;
   }
   if (shouldPassThroughModifierOnKey(e, lastKeyUpRet_)) {
-    resp["return"] = 0;
+    resp["returnValue"] = 0;
     return true;
   }
   bool engineOk = false;
   const EngineState state = currentState(&engineOk);
   if (!engineOk) {
-    resp["return"] = 0;
+    resp["returnValue"] = 0;
     return true;
   }
   buildResponse(state, true, resp);
   appendLangStatusChange(resp, state.asciiMode, state.fullShape);
-  resp["return"] = 1;
+  resp["returnValue"] = 1;
   return true;
 }
 

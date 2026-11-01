@@ -41,19 +41,26 @@ inline std::string framePayload(const std::string &payload) {
   return framed;
 }
 
-template <typename Message>
-bool serializeMessage(const Message &message, std::string &framedPayload) {
-  std::string payload;
-  if (!message.SerializeToString(&payload)) {
-    return false;
-  }
-  framedPayload = framePayload(payload);
+// The wire payload is JSON (protojson-compatible naming); framing stays a
+// 4-byte little-endian length prefix. Kept header-only for pipe framing.
+#include <json/json.h>
+#include <memory>
+
+inline bool serializeJsonMessage(const Json::Value &message,
+                                 std::string &framedPayload) {
+  Json::StreamWriterBuilder builder;
+  builder["commentStyle"] = "None";
+  builder["indentation"] = "";
+  framedPayload = framePayload(Json::writeString(builder, message));
   return true;
 }
 
-template <typename Message>
-bool parsePayload(const std::string &payload, Message &message) {
-  return message.ParseFromArray(payload.data(), static_cast<int>(payload.size()));
+inline bool parseJsonPayload(const std::string &payload, Json::Value &message) {
+  Json::CharReaderBuilder builder;
+  Json::String errors;
+  std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+  return reader->parse(payload.data(), payload.data() + payload.size(),
+                       &message, &errors);
 }
 
 } // namespace Proto

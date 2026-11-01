@@ -11,15 +11,11 @@ configure_file("MoqiTextService.rc.in" "MoqiTextService.rc" @ONLY)
 
 include_directories(
     ${CMAKE_SOURCE_DIR}
-    ${MOQI_GENERATED_PROTO_ROOT}
-    ${MOQI_PROTOBUF_INCLUDE_DIR}
-    ${MOQI_PROTOBUF_ABSL_INCLUDE_DIR}
     ${jsoncpp_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 add_library(MoqiTextService SHARED
-    ${MOQI_PROTO_CPP}
     # core IME implementation
     MoqiImeModule.cpp
     MoqiImeModule.h
@@ -41,11 +37,7 @@ add_library(MoqiTextService SHARED
     ${CMAKE_CURRENT_BINARY_DIR}/MoqiTextService.rc
 )
 
-set_source_files_properties(${MOQI_PROTO_CPP} ${MOQI_PROTO_HDR} PROPERTIES GENERATED TRUE)
-add_dependencies(MoqiTextService moqi_proto_cpp_gen)
-
 target_link_libraries(MoqiTextService
     libIME2_static
-    ${MOQI_PROTOBUF_TARGET}
     jsoncpp_static
 )
