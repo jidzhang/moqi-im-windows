@@ -26,6 +26,7 @@ add_library(MoqiTextService SHARED
     MoqiCandidateWindow.h
     MoqiClient.cpp
     MoqiClient.h
+    JsonCompat.h
     LocalEngine.cpp
     LocalEngine.h
     LocalRerank.cpp
@@ -43,3 +44,11 @@ target_link_libraries(MoqiTextService
     libIME2_static
     jsoncpp_static
 )
+
+# 纯 JSON 解释层单元测试（不依赖 TSF）。覆盖 2026-11-02 三次线上事故的
+# 回归点：叶子菜单项 submenu:[]、changeButton 零值洗状态、分隔符形态。
+# 运行：cmake --build <build> --config Release --target protocol_json_test
+#       && <build>/MoqiTextService/Release/protocol_json_test.exe
+add_executable(protocol_json_test tests/protocol_json_test.cpp)
+target_link_libraries(protocol_json_test jsoncpp_static)
+add_test(NAME protocol_json_test COMMAND protocol_json_test)

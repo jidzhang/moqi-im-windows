@@ -18,6 +18,7 @@
 //
 
 #include "MoqiClient.h"
+#include "JsonCompat.h"
 #include "KeyGuardLog.h"
 #include "libIME2/src/Utils.h"
 #include "libIME2/src/DebugLogConfig.h"
@@ -322,7 +323,8 @@ Client::Client(TextService *service, REFIID langProfileGuid)
       lastLauncherStartAttemptTick_{0}, lastLauncherKillTick_{0},
       asyncPollTimerWindow_(nullptr),
       asyncPollTimerId_(0), asyncFlushInProgress_(false),
-      autoPairRules_(defaultAutoPairRules()), localEngine_(service) {}
+      autoPairRules_(defaultAutoPairRules()), localEngine_(service),
+      keyboardHealAttempted_(false) {}
 
 Client::~Client(void) {
   if (asyncPollTimerId_ != 0) {
@@ -364,10 +366,11 @@ void Client::addKeyEventToRpcRequest(Json::Value &request,
   request["keyEvent"] = keyEvent2;
 }
 
-bool Client::handleRpcResponse(Json::Value &msg, Ime::EditSession *session) {
+bool Client::handleRpcResponse(Json::Value &msg, Ime::EditSession *session,
+                               bool applyEngineState) {
   bool success = msg.get("success", false).asBool();
   if (success) {
-    updateStatus(msg, session);
+    updateStatus(msg, session, applyEngineState);
   }
   return success;
 }
@@ -455,7 +458,14 @@ void Client::updateSelectionKeys(Json::Value &msg) {
   if (setSelKeysVal.isString()) {
     // keys used to select candidates
     std::wstring selKeys = utf8ToUtf16(setSelKeysVal.asCString());
-    textService_->setSelKeys(selKeys);
+    // 2026-11-01：EmitUnpopulated 后空串出现在每个响应里，空串不是"清空
+    // 序号"指令（旧协议省略零值），只在非空时更新，否则候选序号标签消失。
+    if (!selKeys.empty()) {
+      appendRpcGuardLog(L"[setSelKeys] len=" + std::to_wstring(selKeys.size()) +
+                        L" first=U+" +
+                        std::to_wstring(static_cast<unsigned int>(selKeys[0])));
+      textService_->setSelKeys(selKeys);
+    }
   }
 }
 
@@ -650,6 +660,11 @@ void Client::updateLanguageButtons(Json::Value &msg) {
       if (langBtn != nullptr) {
         buttons_.emplace(addId, langBtn); // insert into the map
         textService_->addButton(langBtn);
+        appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
+                          L" added to TSF");
+      } else {
+        appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
+                          L" fromJson returned NULL");
       }
     }
   }
@@ -723,13 +738,18 @@ void Client::updateKeyboardStatus(Json::Value &msg) {
   }
 }
 
-void Client::updateStatus(Json::Value &msg, Ime::EditSession *session) {
-  // We need to handle ordering of some types of the requests.
-  // For example, setCompositionCursor() should happen after
-  // setCompositionCursor().
-  updateSelectionKeys(msg);
-
-  // show message
+void Client::updateStatus(Json::Value &msg, Ime::EditSession *session,
+                          bool applyEngineState) {
+  // 2026-11-02 审计结论：protojson EmitUnpopulated 让隐式零值字段出现在每条
+  // 响应里（compositionString:""/candidateList:[]/showCandidates:false…）。
+  // 只有按键类方法（filterKeyDown/onKeyDown/onKeyUp/filterKeyUp/onPreservedKey
+  // 及后端异步推送）的响应才是引擎状态快照，空值 = "引擎已清空"的合法指令；
+  // 辅助方法（init/onActivate/onCommand/onMenu/compartment/keyboard）的响应
+  // 只是控制回执，其零值状态字段必须忽略，否则每条回执都会清组字/清候选
+  // （proto 时代靠"字段缺省"天然免疫，JSON 迁移后靠这个门控显式恢复）。
+  if (applyEngineState) {
+    updateSelectionKeys(msg);
+  }
   bool endComposition = false;
   const Json::Value customizeUIVal = msg.get("customizeUi", msg["customizeUI"]);
   if (customizeUIVal.isObject()) {
@@ -739,25 +759,27 @@ void Client::updateStatus(Json::Value &msg, Ime::EditSession *session) {
   if (session != nullptr) { // if an edit session is available
     updateMessageWindow(msg, session, endComposition);
 
-    const bool hasCommitString =
-        msg["commitString"].isString() &&
-        !utf8ToUtf16(msg["commitString"].asCString()).empty();
-    const bool hasNonEmptyComposition =
-        msg["compositionString"].isString() &&
-        !utf8ToUtf16(msg["compositionString"].asCString()).empty();
+    if (applyEngineState) {
+      const bool hasCommitString =
+          msg["commitString"].isString() &&
+          !utf8ToUtf16(msg["commitString"].asCString()).empty();
+      const bool hasNonEmptyComposition =
+          msg["compositionString"].isString() &&
+          !utf8ToUtf16(msg["compositionString"].asCString()).empty();
 
-    // Fixed-length schemas may commit current code and immediately start the
-    // next composition in the same response, e.g. "ggtts" -> commit "五笔"
-    // while leaving "s" active. In that case, update the new composition
-    // first, then bind the candidate list to that new composition.
-    if (hasCommitString && hasNonEmptyComposition) {
-      updateCommitString(msg, session, true);
-      updateComposition(msg, session, endComposition);
-      updateCandidateList(msg, session);
-    } else {
-      updateCandidateList(msg, session);
-      updateCommitString(msg, session, false);
-      updateComposition(msg, session, endComposition);
+      // Fixed-length schemas may commit current code and immediately start the
+      // next composition in the same response, e.g. "ggtts" -> commit "五笔"
+      // while leaving "s" active. In that case, update the new composition
+      // first, then bind the candidate list to that new composition.
+      if (hasCommitString && hasNonEmptyComposition) {
+        updateCommitString(msg, session, true);
+        updateComposition(msg, session, endComposition);
+        updateCandidateList(msg, session);
+      } else {
+        updateCandidateList(msg, session);
+        updateCommitString(msg, session, false);
+        updateComposition(msg, session, endComposition);
+      }
     }
   }
 
@@ -897,14 +919,20 @@ void Client::onActivate() {
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret)) {
+  if (handleRpcResponse(ret, nullptr, false)) {
   }
   activationInProgress_.store(false, std::memory_order_release);
   isActivated_ = true;
   connectAttempts_ = MAX_CONNECT_ATTEMPTS;
-  // 2026-11-01 回滚：激活时强制 setKeyboardOpen 会触发 compartment 变更 →
-  // 再次激活回调 → 激活风暴（后端每秒重连，RPC 全瘫）。此路不通，键盘
-  // 开关残留问题另行处理。
+  // 2026-11-01 键盘开关自愈（每进程一次）：关闭态会持久化到输入配置，
+  // 新进程继承后按键不进入本服务（直出英文）。风暴根因（openKeyboard:false
+  // 逐响应关键盘）已修，单次校正不会再触发翻转循环。
+  if (!keyboardHealAttempted_) {
+    keyboardHealAttempted_ = true;
+    if (!textService_->isKeyboardOpened()) {
+      textService_->setKeyboardOpen(true);
+    }
+  }
   // 阶段1：激活即后台初始化进程内引擎，首个空闲按键点完成接管。
   requestLocalEngineInit(textService_);
 }
@@ -949,9 +977,9 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   maybeEngageLocalEngine();
   if (localEngine_.active()) {
     Json::Value ret;
-    if (localEngine_.filterKeyDown(keyEvent, ret)) {
-      ret["success"] = true;
-      handleRpcResponse(ret);
+  if (localEngine_.filterKeyDown(keyEvent, ret)) {
+    ret["success"] = true;
+    handleRpcResponse(ret, nullptr, true);
       return ret["returnValue"].asBool();
     }
     appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
@@ -982,7 +1010,7 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
 
   Json::Value ret;
   const bool rpcOk = callRpcMethod(req, ret);
-  if (rpcOk && handleRpcResponse(ret)) {
+  if (rpcOk && handleRpcResponse(ret, nullptr, true)) {
     return ret["returnValue"].asBool();
   }
   if (isOrdinaryPrintableKey(keyEvent)) {
@@ -1001,9 +1029,9 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
 bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
   if (localEngine_.active()) {
     Json::Value ret;
-    if (localEngine_.onKeyDown(keyEvent, ret)) {
-      ret["success"] = true;
-      handleRpcResponse(ret, session);
+  if (localEngine_.onKeyDown(keyEvent, ret)) {
+    ret["success"] = true;
+    handleRpcResponse(ret, session, true);
       return ret["returnValue"].asBool();
     }
     if (isOrdinaryPrintableKey(keyEvent)) {
@@ -1018,7 +1046,7 @@ bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret, session)) {
+  if (handleRpcResponse(ret, session, true)) {
     refreshAsyncPollTimer();
     flushPendingAsyncResponses(session);
     return ret["returnValue"].asBool();
@@ -1037,7 +1065,7 @@ bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
     Json::Value ret;
     if (localEngine_.filterKeyUp(keyEvent, ret)) {
       ret["success"] = true;
-      handleRpcResponse(ret);
+      handleRpcResponse(ret, nullptr, true);
       return ret["returnValue"].asBool();
     }
     return false;
@@ -1047,7 +1075,7 @@ bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret)) {
+  if (handleRpcResponse(ret, nullptr, true)) {
     return ret["returnValue"].asBool();
   }
   return false;
@@ -1056,9 +1084,9 @@ bool Client::filterKeyUp(Ime::KeyEvent &keyEvent) {
 bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
   if (localEngine_.active()) {
     Json::Value ret;
-    if (localEngine_.onKeyUp(keyEvent, ret)) {
-      ret["success"] = true;
-      handleRpcResponse(ret, session);
+  if (localEngine_.onKeyUp(keyEvent, ret)) {
+    ret["success"] = true;
+    handleRpcResponse(ret, session, true);
       return ret["returnValue"].asBool();
     }
     return false;
@@ -1068,7 +1096,7 @@ bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret, session)) {
+  if (handleRpcResponse(ret, session, true)) {
     refreshAsyncPollTimer();
     flushPendingAsyncResponses(session);
     return ret["returnValue"].asBool();
@@ -1145,7 +1173,8 @@ bool Client::onPreservedKey(const GUID &guid, Ime::EditSession *session) {
 
     Json::Value ret;
     callRpcMethod(req, ret);
-    if (session != nullptr ? handleRpcResponse(ret, session) : handleRpcResponse(ret)) {
+    if (session != nullptr ? handleRpcResponse(ret, session, true)
+                         : handleRpcResponse(ret, nullptr, true)) {
       return ret["returnValue"].asBool();
     }
   }
@@ -1156,62 +1185,100 @@ bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
   appendRpcGuardLog(L"[onCommand] id=" + std::to_wstring(id) +
                     L" type=" + std::to_wstring(static_cast<int>(type)) +
                     L" local=" + (localEngine_.active() ? L"1" : L"0"));
+  // 本地引擎接管时，改引擎状态的命令必须在本地执行（后端切换的是它自己
+  // 会话的状态，本地引擎毫发无损——"图标变了打字没变"的根因）。
+  if (localEngine_.active()) {
+    Json::Value ret(Json::objectValue);
+    ret["success"] = true;
+    ret["seqNum"] = static_cast<Json::UInt>(nextSeqNum_++);
+    ret["returnValue"] = 1;
+    if ((id == 1 || id == 2) && localEngine_.toggleOption("ascii_mode", ret)) {
+      handleRpcResponse(ret, nullptr, false);
+      return true;
+    }
+    if (id == 3 && localEngine_.toggleOption("full_shape", ret)) {
+      handleRpcResponse(ret, nullptr, false);
+      return true;
+    }
+    // 其余命令（方案/主题/维护等）仍走后端（phase B 再本地化）。
+  }
   auto req = createRpcRequest("onCommand");
   req["commandId"] = id;
   req["commandType"] = static_cast<int>(type);
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret)) {
+  if (handleRpcResponse(ret, nullptr, false)) {
     return ret["returnValue"].asBool();
   }
   return false;
 }
 
 bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
-  appendRpcGuardLog(L"[onMenu] button=" + utf8ToUtf16(button_id.c_str()));
+  appendRpcGuardLog(L"[onMenu] button=" + utf8ToUtf16(button_id.c_str()) +
+                    L" wait=" + std::to_wstring(shouldWaitConnection_ ? 1 : 0) +
+                    L" pipe=" +
+                    std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
   auto req = createRpcRequest("onMenu");
   req["buttonId"] = button_id;
 
-  callRpcMethod(req, result);
-  if (handleRpcResponse(result)) {
+  const bool rpcOk = callRpcMethod(req, result);
+  appendRpcGuardLog(L"[onMenuRpc] ok=" + std::to_wstring(rpcOk ? 1 : 0) +
+                    L" pipe=" +
+                    std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
+  {
+    const Json::Value& mi = result["menuItems"];
+    std::wstring dump = L"[onMenuResult] isArray=" +
+                        std::to_wstring(mi.isArray() ? 1 : 0) +
+                        L" size=" + std::to_wstring(mi.size());
+    if (mi.isArray()) {
+      int shown = 0;
+      for (const auto& item : mi) {
+        if (shown >= 6) break;
+        dump += L" {" + std::to_wstring(item.get("id", 0).asUInt()) + L":" +
+                utf8ToUtf16(item.get("text", "").asCString()) + L"}";
+        ++shown;
+      }
+    }
+    appendRpcGuardLog(dump);
+  }
+  if (handleRpcResponse(result, nullptr, false)) {
     return true;
   }
   return false;
 }
 
-static bool menuFromJson(ITfMenu *pMenu, const Json::Value &menuInfo) {
-  if (pMenu != nullptr && menuInfo.isArray()) {
-    for (const auto &item : menuInfo) {
-      UINT id = item.get("id", 0).asUInt();
-      std::wstring text = utf8ToUtf16(item.get("text", "").asCString());
-
-      DWORD flags = 0;
-      Json::Value submenuInfo;
-      ITfMenu *submenu = nullptr;
-      if (id == 0 && text.empty())
-        flags = TF_LBMENUF_SEPARATOR;
-      else {
-        if (item.get("checked", false).asBool())
-          flags |= TF_LBMENUF_CHECKED;
-        if (!item.get("enabled", true).asBool())
-          flags |= TF_LBMENUF_GRAYED;
-
-        submenuInfo =
-            item["submenu"]; // FIXME: this is a deep copy. too bad! :-(
-        if (submenuInfo.isArray()) {
-          flags |= TF_LBMENUF_SUBMENU;
-        }
-      }
-      pMenu->AddMenuItem(id, flags, NULL, NULL, text.c_str(), text.length(),
-                         flags & TF_LBMENUF_SUBMENU ? &submenu : nullptr);
-      if (submenu != nullptr && submenuInfo.isArray()) {
-        menuFromJson(submenu, submenuInfo);
-      }
+static void addMenuNodesToTfMenu(
+    ITfMenu *pMenu, const std::vector<ProtocolJson::MenuNode> &nodes) {
+  for (const auto &node : nodes) {
+    const std::wstring text = utf8ToUtf16(node.text.c_str());
+    DWORD flags = 0;
+    ITfMenu *submenu = nullptr;
+    if (node.separator) {
+      flags = TF_LBMENUF_SEPARATOR;
+    } else {
+      if (node.checked)
+        flags |= TF_LBMENUF_CHECKED;
+      if (!node.enabled)
+        flags |= TF_LBMENUF_GRAYED;
+      if (!node.children.empty())
+        flags |= TF_LBMENUF_SUBMENU;
     }
-    return true;
+    pMenu->AddMenuItem(node.id, flags, NULL, NULL, text.c_str(), text.length(),
+                       flags & TF_LBMENUF_SUBMENU ? &submenu : nullptr);
+    if (submenu != nullptr && !node.children.empty()) {
+      addMenuNodesToTfMenu(submenu, node.children);
+    }
   }
-  return false;
+}
+
+static bool menuFromJson(ITfMenu *pMenu, const Json::Value &menuInfo) {
+  std::vector<ProtocolJson::MenuNode> nodes;
+  if (pMenu == nullptr || !ProtocolJson::parseMenuNodes(menuInfo, nodes)) {
+    return false;
+  }
+  addMenuNodesToTfMenu(pMenu, nodes);
+  return true;
 }
 
 // called when a language bar button needs a menu
@@ -1225,34 +1292,38 @@ bool Client::onMenu(LangBarButton *btn, ITfMenu *pMenu) {
   return false;
 }
 
-static HMENU menuFromJson(const Json::Value &menuInfo) {
-  if (menuInfo.isArray()) {
-    HMENU menu = ::CreatePopupMenu();
-    for (const auto &item : menuInfo) {
-      UINT id = item.get("id", 0).asUInt();
-      std::wstring text = utf8ToUtf16(item.get("text", "").asCString());
-
-      UINT flags = MF_STRING;
-      if (id == 0 && text.empty())
-        flags = MF_SEPARATOR;
-      else {
-        if (item.get("checked", false).asBool())
-          flags |= MF_CHECKED;
-        if (!item.get("enabled", true).asBool())
-          flags |= MF_GRAYED;
-
-        const Json::Value &subMenuValue = item.get("submenu", Json::nullValue);
-        if (subMenuValue.isArray()) {
-          HMENU submenu = menuFromJson(subMenuValue);
-          flags |= MF_POPUP;
-          id = UINT_PTR(submenu);
-        }
+static void appendMenuNodes(HMENU menu,
+                            const std::vector<ProtocolJson::MenuNode> &nodes) {
+  for (const auto &node : nodes) {
+    const std::wstring text = utf8ToUtf16(node.text.c_str());
+    UINT flags = MF_STRING;
+    UINT id = node.id;
+    if (node.separator) {
+      flags = MF_SEPARATOR;
+    } else {
+      if (node.checked)
+        flags |= MF_CHECKED;
+      if (!node.enabled)
+        flags |= MF_GRAYED;
+      if (!node.children.empty()) {
+        HMENU submenu = ::CreatePopupMenu();
+        appendMenuNodes(submenu, node.children);
+        flags |= MF_POPUP;
+        id = UINT_PTR(submenu);
       }
-      AppendMenu(menu, flags, id, text.c_str());
     }
-    return menu;
+    AppendMenu(menu, flags, id, text.c_str());
   }
-  return NULL;
+}
+
+static HMENU menuFromJson(const Json::Value &menuInfo) {
+  std::vector<ProtocolJson::MenuNode> nodes;
+  if (!ProtocolJson::parseMenuNodes(menuInfo, nodes)) {
+    return NULL;
+  }
+  HMENU menu = ::CreatePopupMenu();
+  appendMenuNodes(menu, nodes);
+  return menu;
 }
 
 // called when a language bar button needs a menu
@@ -1275,7 +1346,7 @@ void Client::onCompartmentChanged(const GUID &key) {
 
     Json::Value ret;
     callRpcMethod(req, ret);
-    if (handleRpcResponse(ret)) {
+    if (handleRpcResponse(ret, nullptr, false)) {
     }
   }
 }
@@ -1287,7 +1358,7 @@ void Client::onKeyboardStatusChanged(bool opened) {
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret)) {
+  if (handleRpcResponse(ret, nullptr, false)) {
   }
 }
 
@@ -1301,7 +1372,7 @@ void Client::onCompositionTerminated(bool forced) {
 
   Json::Value ret;
   callRpcMethod(req, ret);
-  if (handleRpcResponse(ret)) {
+  if (handleRpcResponse(ret, nullptr, false)) {
   }
 }
 
@@ -1314,7 +1385,7 @@ bool Client::init() {
   req["isConsole"] = textService_->isConsole();
 
   Json::Value ret;
-  return callRpcMethod(req, ret) && handleRpcResponse(ret);
+  return callRpcMethod(req, ret) && handleRpcResponse(ret, nullptr, false);
 }
 
 Json::Value Client::createRpcRequest(const char *methodName) {
@@ -1392,10 +1463,10 @@ void Client::enqueueAsyncResponse(const Json::Value &msg) {
 
 bool Client::applyAsyncResponse(Json::Value &msg, Ime::EditSession *session) {
   if (session != nullptr) {
-    return handleRpcResponse(msg, session);
+    return handleRpcResponse(msg, session, true);
   }
 
-  return handleRpcResponse(msg);
+  return handleRpcResponse(msg, nullptr, true);
 }
 
 void Client::flushPendingAsyncResponses(Ime::EditSession *session) {
@@ -1484,11 +1555,52 @@ DWORD waitOverlappedResult(HANDLE pipe, OVERLAPPED &overlapped,
 
 } // namespace
 
-// Reads exactly one pipe message (a message-mode pipe may deliver it in
-// several chunks if it is larger than the read buffer). The handle is opened
-// with FILE_FLAG_OVERLAPPED, so waiting for a reply is event-driven instead of
-// polling: the old PeekNamedPipe + Sleep(2ms) loop added ~2-3ms to *every* RPC,
-// and a keystroke issues four RPCs, which was the dominant typing latency.
+// One overlapped ReadFile of up to |want| bytes, appended to |out|. In BYTE
+// read mode the pipe delivers whatever is available (>= 1 byte or error).
+// Returns ERROR_SUCCESS, ERROR_TIMEOUT, or a Win32 error. A zero-byte
+// successful read means EOF and is reported as ERROR_BROKEN_PIPE.
+static DWORD readPipeChunk(HANDLE pipe, size_t want, std::string &out,
+                           ULONGLONG deadline) {
+  char buf[4096];
+  OVERLAPPED overlapped = {};
+  overlapped.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (overlapped.hEvent == nullptr) {
+    return ERROR_NOT_ENOUGH_MEMORY;
+  }
+  const DWORD chunk = static_cast<DWORD>((std::min)(want, sizeof(buf)));
+  DWORD rlen = 0;
+  DWORD result = ERROR_SUCCESS;
+  if (!::ReadFile(pipe, buf, chunk, &rlen, &overlapped)) {
+    const DWORD error = ::GetLastError();
+    if (error == ERROR_IO_PENDING) {
+      const ULONGLONG now = ::GetTickCount64();
+      const DWORD remaining =
+          now >= deadline ? 0 : static_cast<DWORD>(deadline - now);
+      result = waitOverlappedResult(pipe, overlapped, remaining, rlen);
+    } else {
+      result = error;
+    }
+  }
+  ::CloseHandle(overlapped.hEvent);
+  if (result == ERROR_SUCCESS) {
+    if (rlen == 0) {
+      return ERROR_BROKEN_PIPE;
+    }
+    out.append(buf, rlen);
+  }
+  return result;
+}
+
+// Reads exactly one framed message (4-byte little-endian length prefix +
+// payload) and returns it INCLUDING the prefix, matching what a message-mode
+// read used to deliver. The pipe is kept in BYTE read mode: overlapped
+// message-mode reads silently dropped the middle chunks of frames larger
+// than the 4096 buffer (the 15KB onMenu reply assembled to 6.9KB and the
+// JSON parse failed on every menu request; 2026-11-02, probe3 repro).
+// A timeout before the first byte is a "nothing arrived yet" timeout and is
+// reported through |timedOut| (safe to keep the connection); a timeout with
+// partial data desyncs the byte stream, so it is reported as a hard error
+// and the caller closes the connection.
 bool Client::readPipeMessageWithTimeout(HANDLE pipe, std::string &message,
                                         DWORD timeoutMs, bool *timedOut) {
   message.clear();
@@ -1500,48 +1612,36 @@ bool Client::readPipeMessageWithTimeout(HANDLE pipe, std::string &message,
   }
   const ULONGLONG deadline = ::GetTickCount64() + timeoutMs;
 
-  char buf[4096];
-  for (;;) {
-    OVERLAPPED overlapped = {};
-    overlapped.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (overlapped.hEvent == nullptr) {
-      return false;
-    }
-
-    DWORD rlen = 0;
-    DWORD result = ERROR_SUCCESS;
-    if (!::ReadFile(pipe, buf, sizeof(buf), &rlen, &overlapped)) {
-      const DWORD error = ::GetLastError();
-      if (error != ERROR_IO_PENDING) {
-        result = error;
-      } else {
-        const ULONGLONG now = ::GetTickCount64();
-        const DWORD remaining =
-            now >= deadline ? 0 : static_cast<DWORD>(deadline - now);
-        result = waitOverlappedResult(pipe, overlapped, remaining, rlen);
-      }
-    }
-    ::CloseHandle(overlapped.hEvent);
-
+  while (message.size() < 4) {
+    const DWORD result =
+        readPipeChunk(pipe, 4 - message.size(), message, deadline);
     if (result == ERROR_TIMEOUT) {
-      if (timedOut != nullptr) {
+      if (timedOut != nullptr && message.empty()) {
         *timedOut = true;
       }
       return false;
     }
-    if (result != ERROR_SUCCESS && result != ERROR_MORE_DATA) {
+    if (result != ERROR_SUCCESS) {
       return false;
     }
-    // A successful zero-byte read means the other side closed the pipe.
-    if (rlen == 0) {
-      return false;
-    }
-    message.append(buf, rlen);
-    if (result == ERROR_SUCCESS) {
-      return true; // whole message read
-    }
-    // ERROR_MORE_DATA: the buffer filled up, the rest follows immediately.
   }
+  std::uint32_t payloadSize = 0;
+  std::memcpy(&payloadSize, message.data(), sizeof(payloadSize));
+  // Guard against a corrupted stream: the backend never sends frames this big.
+  if (payloadSize > 64U * 1024 * 1024) {
+    return false;
+  }
+  const size_t total = 4 + static_cast<size_t>(payloadSize);
+  while (message.size() < total) {
+    const DWORD result =
+        readPipeChunk(pipe, total - message.size(), message, deadline);
+    if (result != ERROR_SUCCESS) {
+      // Mid-frame timeouts desync the byte stream: report a hard error so
+      // the caller tears the connection down instead of keeping it warm.
+      return false;
+    }
+  }
+  return true;
 }
 
 // Writes one request as a single pipe message. The pipe is overlapped, so the
@@ -1593,51 +1693,73 @@ bool Client::callRpcMethod(Json::Value &request, Json::Value &response) {
   try {
     ScopedRpcInProgress rpcGuard(rpcInProgress_);
     if (shouldWaitConnection_ && !waitForRpcConnection(connectAttempts_)) {
+      appendRpcGuardLog(L"[callRpcMethod] connect failed, method=" +
+                        utf8ToUtf16(request.get("method", "").asCString()));
       return false;
     }
 
     pollAsyncResponses();
 
-    // Add a sequence number for the request.
-    auto seqNum = nextSeqNum_++;
-    request["seqNum"] = seqNum;
-
-    std::string serializedRequest;
-    if (!Proto::serializeJsonMessage(request, serializedRequest)) {
-      return false;
-    }
-
-    std::string serializedResponse;
-    bool success = false;
+    // 单次 请求→读响应 往返；失败原因经 timedOut 带出。
     bool timedOut = false;
-    if (callRpcPipe(pipe_, serializedRequest, serializedResponse, &timedOut)) {
+    auto attemptRpc = [&]() -> bool {
+      const auto seqNum = nextSeqNum_++;
+      request["seqNum"] = seqNum;
+      std::string serializedRequest;
+      if (!Proto::serializeJsonMessage(request, serializedRequest)) {
+        return false;
+      }
+      std::string serializedResponse;
+      timedOut = false;
+      if (!callRpcPipe(pipe_, serializedRequest, serializedResponse,
+                       &timedOut)) {
+        return false;
+      }
       while (true) {
         Proto::FrameBuffer responseBuffer;
-        responseBuffer.append(serializedResponse.data(), serializedResponse.size());
+        responseBuffer.append(serializedResponse.data(),
+                              serializedResponse.size());
         std::string payload;
         Json::Value msg;
-        success = responseBuffer.nextFrame(payload) &&
-                  Proto::parseJsonPayload(payload, msg);
-        if (!success) {
-          break;
+        if (!responseBuffer.nextFrame(payload) ||
+            !Proto::parseJsonPayload(payload, msg)) {
+          return false;
         }
         if (msg.get("seqNum", -1).asInt() == seqNum) {
           response = msg;
-          break;
+          return true;
         }
-
         enqueueAsyncResponse(msg);
         serializedResponse.clear();
         // The synchronous reply may arrive in a later pipe message than an
         // async notification; wait for it with a bounded timeout.
         if (!readPipeMessageWithTimeout(pipe_, serializedResponse,
                                         RPC_ASYNC_REPLY_WAIT_MS, &timedOut)) {
-          success = false;
-          break;
+          return false;
         }
       }
-    } else {
-      success = false;
+    };
+
+    bool success = attemptRpc();
+
+    // 2026-11-01 管道自愈：本地引擎接管后按键不走管道，pipe 在长空闲期变陈旧。
+    // 原重试条件要求 pipe_==INVALID，但 callRpcPipe 按值收句柄、失败时不改
+    // pipe_，陈旧句柄看起来仍然有效 → 重试永不触发，菜单/命令类 RPC 全灭。
+    // 现在改为：只要是真错（不是已握手连接上的纯超时），就强制关闭管道、
+    // 重连并重试一次。纯超时仍保留"连接保温"策略（冷启动后端慢，不是死）。
+    if (!success && (!timedOut || !handshakeComplete_)) {
+      appendRpcGuardLog(
+          L"[callRpcMethod] pipe error, reconnect+retry method=" +
+          utf8ToUtf16(request.get("method", "").asCString()) +
+          L" timedOut=" + std::to_wstring(timedOut ? 1 : 0) + L" pipe=" +
+          std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
+      closeRpcConnection();
+      if (!shouldWaitConnection_ || waitForRpcConnection(connectAttempts_)) {
+        success = attemptRpc();
+      }
+      if (!success) {
+        appendRpcGuardLog(L"[callRpcMethod] reconnect+retry failed");
+      }
     }
 
     flushPendingAsyncResponses();
@@ -1688,13 +1810,23 @@ HANDLE Client::connectPipe(const wchar_t *pipeName, int timeoutMs) {
     // instead of polling PeekNamedPipe + Sleep(2ms) on every RPC.
     pipe = CreateFile(pipeName, GENERIC_READ | GENERIC_WRITE, 0, NULL,
                       OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    if (pipe == INVALID_HANDLE_VALUE) {
+      appendRpcGuardLog(L"[connectPipe] CreateFile failed err=" +
+                        std::to_wstring(::GetLastError()));
+    }
+  } else {
+    appendRpcGuardLog(L"[connectPipe] WaitNamedPipe failed timeout=" +
+                      std::to_wstring(timeoutMs) + L" err=" +
+                      std::to_wstring(::GetLastError()));
   }
 
   if (pipe != INVALID_HANDLE_VALUE) {
-    DWORD mode = PIPE_READMODE_MESSAGE;
-    // The pipe is connected; change to message-read mode.
-    if (!isPipeCreatedByMoqiServer(pipe) ||
-        !::SetNamedPipeHandleState(pipe, &mode, NULL, NULL)) {
+    // 2026-11-02: stay in BYTE read mode. Message mode made multi-chunk
+    // overlapped reads drop data for frames > 4096 bytes (see
+    // readPipeMessageWithTimeout); framing is explicit via the length prefix.
+    if (!isPipeCreatedByMoqiServer(pipe)) {
+      appendRpcGuardLog(L"[connectPipe] security check failed err=" +
+                        std::to_wstring(::GetLastError()));
       DisconnectNamedPipe(pipe);
       CloseHandle(pipe);
       pipe = INVALID_HANDLE_VALUE;
@@ -1763,6 +1895,7 @@ bool Client::ensureLauncherRunning() {
   // forever.
   const ULONGLONG now = ::GetTickCount64();
   if (now - lastLauncherStartAttemptTick_ < LAUNCHER_START_RETRY_COOLDOWN_MS) {
+    appendRpcGuardLog(L"[ensureLauncher] cooldown, skip launch");
     return false;
   }
   lastLauncherStartAttemptTick_ = now;
@@ -1794,6 +1927,8 @@ bool Client::ensureLauncherRunning() {
     ::CloseHandle(processInfo.hProcess);
     return true;
   }
+  appendRpcGuardLog(L"[ensureLauncher] CreateProcess failed err=" +
+                    std::to_wstring(::GetLastError()));
   return false;
 }
 
@@ -1814,6 +1949,7 @@ bool Client::isLauncherProcessRunning() {
 bool Client::forceRestartLauncher() {
   const ULONGLONG now = ::GetTickCount64();
   if (now - lastLauncherKillTick_ < LAUNCHER_KILL_RETRY_COOLDOWN_MS) {
+    appendRpcGuardLog(L"[launcher] force-restart cooldown, skip");
     return false;
   }
   lastLauncherKillTick_ = now;
@@ -1848,6 +1984,8 @@ bool Client::waitForRpcConnection(int connectAttempts) {
     return true;
   }
 
+  appendRpcGuardLog(L"[connect] begin attempts=" +
+                    std::to_wstring(connectAttempts));
   wstring serverPipeName = getPipeName(L"Launcher");
   pipe_ = connectPipe(serverPipeName.c_str(), 0);
   if (pipe_ == INVALID_HANDLE_VALUE) {
@@ -1863,6 +2001,8 @@ bool Client::waitForRpcConnection(int connectAttempts) {
   if (pipe_ == INVALID_HANDLE_VALUE && isLauncherProcessRunning()) {
     // A launcher process exists but we cannot reach its pipe: it is stuck.
     // Force a restart and retry once.
+    appendRpcGuardLog(L"[connect] launcher alive but pipe unreachable; "
+                      L"force restart");
     forceRestartLauncher();
     for (int attempt = 0;
          pipe_ == INVALID_HANDLE_VALUE && attempt < connectAttempts; ++attempt) {
@@ -1871,8 +2011,13 @@ bool Client::waitForRpcConnection(int connectAttempts) {
   }
 
   if (pipe_ != INVALID_HANDLE_VALUE) {
-    return completeConnectionHandshake();
+    const bool handshakeOk = completeConnectionHandshake();
+    appendRpcGuardLog(L"[connect] handshake ok=" +
+                      std::to_wstring(handshakeOk ? 1 : 0));
+    return handshakeOk;
   }
+  appendRpcGuardLog(L"[connect] give up (no pipe, launcherRunning=" +
+                    std::to_wstring(isLauncherProcessRunning() ? 1 : 0) + L")");
   return false;
 }
 
@@ -1908,6 +2053,8 @@ void Client::resetTextServiceState() {
 
   // some language bar buttons are not unregistered properly
   if (!buttons_.empty()) {
+    appendRpcGuardLog(L"[reset] removing buttons n=" +
+                      std::to_wstring(buttons_.size()));
     for (auto &item : buttons_) {
       textService_->removeButton(item.second);
     }

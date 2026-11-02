@@ -765,6 +765,25 @@ bool LocalEngine::changePage(bool backward, Json::Value& resp) {
   return true;
 }
 
+bool LocalEngine::toggleOption(const char* name, Json::Value& resp) {
+  if (sessionId_ == 0) {
+    return false;
+  }
+  RimeRuntime& runtime = RimeRuntime::instance();
+  std::lock_guard<std::mutex> lock(runtime.mutex());
+  if (!runtime.rimeFindSession(sessionId_)) {
+    return false;
+  }
+  const bool current = runtime.rimeGetOption(sessionId_, name) != 0;
+  runtime.rimeSetOption(sessionId_, name, current ? 0 : 1);
+  bool ascii = false;
+  bool full = false;
+  if (readInputModes(&ascii, &full)) {
+    appendLangStatusChange(resp, ascii, full);
+  }
+  return true;
+}
+
 void LocalEngine::onCompositionTerminated(bool forced) {
   secondSelectConsumeKeyUpCode_ = 0;
   keyComposing_ = false;

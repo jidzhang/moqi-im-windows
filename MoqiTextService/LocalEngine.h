@@ -56,6 +56,8 @@ public:
   bool selectCandidate(int index, Json::Value& resp);
   bool changePage(bool backward, Json::Value& resp);
   void onCompositionTerminated(bool forced);
+  // 引擎状态命令本地执行（ascii_mode/full_shape），响应带图标刷新。
+  bool toggleOption(const char* name, Json::Value& resp);
 
 private:
   struct EngineState {

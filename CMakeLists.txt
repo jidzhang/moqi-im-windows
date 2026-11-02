@@ -17,6 +17,9 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cxx_fl
 
 project(MoqiIMWindows LANGUAGES C CXX)
 
+# 独立单元测试（MoqiTextService/tests/protocol_json_test.cpp）。
+enable_testing()
+
 include(FetchContent)
 
 # Load semantic version from version.txt.

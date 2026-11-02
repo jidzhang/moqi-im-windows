@@ -1,4 +1,4 @@
-; Moqi IM for Windows — Inno Setup 6 wizard (x64 only).
+﻿; Moqi IM for Windows — Inno Setup 6 wizard (x64 only).
 ; Build: install Inno Setup 6, then run build-installer.ps1 -StageDir <stage root>
 ; AppId / IME CLSID: keep stable across releases (ARP upgrade path).
 
@@ -217,15 +217,70 @@ begin
   RaiseException(Operation + ' failed (exit code ' + IntToStr(ResultCode) + ').');
 end;
 
+// Free a file that may be locked by a running process (loaded DLL).
+// Windows allows renaming a loaded DLL: the loading process keeps the old
+// file content via its existing handle, while the name is freed for the
+// installer to write a fresh copy. Renamed copies are cleaned up by the
+// next install's [InstallDelete] or by CleanupStaleOldFiles in SetupHelper.
+procedure FreeLockedFile(const FilePath: string);
+var
+  I: Integer;
+  NewName: string;
+begin
+  if FileExists(FilePath) then
+  begin
+    // Try delete first (works when not locked).
+    if DeleteFile(FilePath) then Exit;
+    // Locked: rename out of the way (always succeeds on loaded DLLs).
+    I := 0;
+    repeat
+      Inc(I);
+      NewName := FilePath + '.busy' + IntToStr(I);
+    until not FileExists(NewName);
+    RenameFile(FilePath, NewName);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  FindRec: TFindRec;
+  DataDir: string;
 begin
   if CurStep = ssInstall then
   begin
     HadExistingInstall := ExistingImeInstallationPresent;
     StopMoqiProcesses;
     DeleteLegacyAutorunValue;
+    // rime.dll + gram/bin files are loaded or memory-mapped in-process by
+    // every app that typed Chinese (architecture phase 1). Killing
+    // MoqiIME is not enough — free each by renaming so the installer can
+    // write fresh copies without "access denied".
+    FreeLockedFile(ExpandConstant('{app}\moqi-ime\input_methods\rime\rime.dll'));
+    // Free all .gram files (memory-mapped by octagram plugin).
+    DataDir := ExpandConstant('{app}\moqi-ime\input_methods\rime\data');
+    if FindFirst(DataDir + '\*.gram', FindRec) then
+    begin
+      try
+        repeat
+          FreeLockedFile(DataDir + '\' + FindRec.Name);
+        until not FindNext(FindRec);
+      finally
+        FindClose(FindRec);
+      end;
+    end;
+    // Free prebuilt build files (memory-mapped by librime dictionaries).
+    DataDir := DataDir + '\build';
+    if FindFirst(DataDir + '\*.bin', FindRec) then
+    begin
+      try
+        repeat
+          FreeLockedFile(DataDir + '\' + FindRec.Name);
+        until not FindNext(FindRec);
+      finally
+        FindClose(FindRec);
+      end;
+    end;
   end;
 
   if CurStep = ssPostInstall then
@@ -236,19 +291,11 @@ begin
     if ResultCode = SetupHelperExitSuccess then
     begin
       HelperInstallSucceeded := True;
-      if HadExistingInstall then
-        SuppressibleMsgBox(
-          '检测到这是一次覆盖安装。若当前会话里仍有旧的 TSF 实例，墨奇可能要在注销或重启 Windows 后才能立即恢复正常输入。',
-          mbInformation, MB_OK, IDOK);
     end
     else if ResultCode = SetupHelperExitRestartRequired then
     begin
       HelperInstallSucceeded := True;
       HelperInstallNeedsRestart := True;
-      SuppressibleMsgBox(
-        '安装程序已更新应用文件，但 TSF DLL 当前仍被系统占用。' + #13#10#13#10 +
-        '请在安装完成后尽快重启 Windows。安装器已安排在系统重启后自动完成 TSF 注册。',
-        mbInformation, MB_OK, IDOK);
     end;
     if (ResultCode <> SetupHelperExitSuccess) and
        (ResultCode <> SetupHelperExitRestartRequired) then
@@ -270,6 +317,18 @@ begin
       Log('Skip launching MoqiLauncher: succeeded=' +
         IntToStr(Ord(HelperInstallSucceeded)) + ' needsRestart=' +
         IntToStr(Ord(HelperInstallNeedsRestart)));
+  end;
+end;
+
+// 2026-11-02 用户定：不用弹出式对话框；提示写到完成页，且仅限覆盖安装时出现；首次安装不提示重启。
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpFinished then
+  begin
+    if HelperUninstallNeedsRestart then
+      WizardForm.FinishedLabel.Caption := '部分 TSF DLL 已安排在系统重启后删除。请尽快重启 Windows，以完成卸载清理。'
+    else if HelperInstallNeedsRestart or HadExistingInstall then
+      WizardForm.FinishedLabel.Caption := '建议安装完成后重启电脑，让新版墨奇输入法立即生效。';
   end;
 end;
 
@@ -296,9 +355,5 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RegPurgeMoqiResiduals;
-    if HelperUninstallNeedsRestart then
-      SuppressibleMsgBox(
-        '部分 TSF DLL 已安排在系统重启后删除。请尽快重启 Windows，以完成卸载清理。',
-        mbInformation, MB_OK, IDOK);
   end;
 end;

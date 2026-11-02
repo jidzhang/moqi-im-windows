@@ -130,7 +130,9 @@ private:
     void addKeyEventToRpcRequest(Json::Value& request, Ime::KeyEvent& keyEvent);
     bool sendOnMenu(std::string button_id, Json::Value& result);
 
-    bool handleRpcResponse(Json::Value& msg, Ime::EditSession* session = nullptr);
+    // applyEngineState=false：辅助方法（init/onActivate/onCommand/onMenu/
+    // compartment/keyboard）的响应只带控制回执，零值状态字段必须忽略。
+    bool handleRpcResponse(Json::Value& msg, Ime::EditSession* session, bool applyEngineState);
 
     // Update text service and UI status based on RPC responses.
     void updateSelectionKeys(Json::Value& msg);
@@ -142,7 +144,7 @@ private:
 	void updateKeyboardStatus(Json::Value& msg);
     void updateCandidateList(Json::Value& msg, Ime::EditSession* session);
     void updateUI(const Json::Value& data);
-    void updateStatus(Json::Value& msg, Ime::EditSession* session = nullptr);
+    void updateStatus(Json::Value& msg, Ime::EditSession* session, bool applyEngineState);
 
 private:
 	TextService* textService_;
@@ -164,6 +166,7 @@ private:
 	std::deque<Json::Value> pendingAsyncResponses_;
 	std::vector<AutoPairRuleState> autoPairRules_;
 	LocalEngine localEngine_;
+	bool keyboardHealAttempted_;
 };
 
 }

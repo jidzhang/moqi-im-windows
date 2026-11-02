@@ -976,6 +976,19 @@ void TextService::updateCandidates(Ime::EditSession* session) {
 		// the items in the candidate list should not exist the
 		// number of available keys used to select them.
 		assert(candidates_.size() <= selKeys_.size());
+		{
+			// 2026-11-01 序号取证：首候选标签缺 "1" 的现场数据。
+			std::wstring keysDump;
+			for (size_t k = 0; k < selKeys_.size() && k < 10; ++k) {
+				keysDump += L"U+";
+				wchar_t buf[8] = {};
+				swprintf_s(buf, L"%04X ", static_cast<unsigned int>(selKeys_[k]));
+				keysDump += buf;
+			}
+			appendRpcGuardLog(L"[selKeysState] size=" +
+			                  std::to_wstring(selKeys_.size()) + L" [" +
+			                  keysDump + L"]");
+		}
 		for (int i = 0; i < candidates_.size(); ++i) {
 			candidateWindow_->add(candidates_[i], selKeys_[i]);
 		}

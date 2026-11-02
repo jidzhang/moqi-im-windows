@@ -20,6 +20,7 @@
 
 #include "MoqiLangBarButton.h"
 #include "MoqiTextService.h"
+#include "JsonCompat.h"
 #include "libIME2/src/Utils.h"
 
 // this is the GUID of the IME mode icon in Windows 8
@@ -89,58 +90,47 @@ void LangBarButton::setIconFile(std::wstring filePath) {
 }
 
 void LangBarButton::updateFromJson(const Json::Value& info) {
-	const Json::Value& iconValue = info["icon"];
-	if (iconValue.isString()) {
-        setIconFile(utf8ToUtf16(iconValue.asCString()));
+	// 2026-11-02: 零值=未指定，不更新（后端 protojson EmitUnpopulated 会把
+	// changeButton 的未设置字段以零值下发）。解析规则见 JsonCompat.h，
+	// 单测见 tests/protocol_json_test.cpp。
+	const Moqi::ProtocolJson::ButtonPatch patch =
+		Moqi::ProtocolJson::parseButtonPatch(info);
+	if (patch.hasIcon) {
+		setIconFile(utf8ToUtf16(patch.icon.c_str()));
 	}
-
-	const Json::Value& cmdValue = info["commandId"];
-	if (cmdValue.isUInt()) {
-		UINT cmd = cmdValue.asUInt();
-		setCommandId(cmd);
+	if (patch.hasCommandId) {
+		setCommandId(patch.commandId);
 	}
-
-	const Json::Value& textValue = info["text"];
-	if (textValue.isString()) {
-		std::wstring text = utf8ToUtf16(textValue.asCString());
+	if (patch.hasText) {
+		const std::wstring text = utf8ToUtf16(patch.text.c_str());
 		setText(text.c_str());
 	}
-
-	const Json::Value& tooltipValue = info["tooltip"];
-	if (tooltipValue.isString()) {
-		std::wstring tooltip = utf8ToUtf16(tooltipValue.asCString());
+	if (patch.hasTooltip) {
+		const std::wstring tooltip = utf8ToUtf16(patch.tooltip.c_str());
 		setTooltip(tooltip.c_str());
 	}
-
-	// update style of the button
-	const Json::Value& typeValue  = info["type"];
-	if (typeValue.isString()) {
+	if (patch.kind != Moqi::ProtocolJson::ButtonPatch::Kind::None) {
 		DWORD newStyle = style() & ~(TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_BTN_TOGGLE);
-		std::string type = typeValue.asString();
-		// protojson emits symbolic enum names (BUTTON_TYPE_BUTTON ...).
-		if (type.rfind("BUTTON_TYPE_", 0) == 0) {
-			type = type.substr(12);
-			if (!type.empty()) {
-				type[0] = static_cast<char>(tolower(type[0]));
-			}
-		}
-		if (type == "button")
+		switch (patch.kind) {
+		case Moqi::ProtocolJson::ButtonPatch::Kind::Button:
 			newStyle |= TF_LBI_STYLE_BTN_BUTTON;
-		else if (type == "toggle")
+			break;
+		case Moqi::ProtocolJson::ButtonPatch::Kind::Toggle:
 			newStyle |= TF_LBI_STYLE_BTN_TOGGLE;
-		else if (type == "menu")
+			break;
+		case Moqi::ProtocolJson::ButtonPatch::Kind::Menu:
 			newStyle |= TF_LBI_STYLE_BTN_MENU;
+			break;
+		default:
+			break;
+		}
 		setStyle(newStyle);
 	}
-
-	const Json::Value& enableValue = info["enable"];
-	if (enableValue.isBool()) {
-		setEnabled(enableValue.asBool());
+	if (patch.hasEnable) {
+		setEnabled(patch.enable);
 	}
-
-	const Json::Value& toggledValue = info["toggled"];
-	if (toggledValue.isBool()) {
-		setToggled(toggledValue.asBool());
+	if (patch.hasToggled) {
+		setToggled(patch.toggled);
 	}
 }
 
@@ -161,7 +151,17 @@ STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT *prcA
 		if (popupMenu != NULL) {
 			Ime::Window window; // TrackPopupMenu requires a window to work, so let's build a transient one.
 			window.create(HWND_DESKTOP, 0);
-			UINT ret = ::TrackPopupMenu(popupMenu, TPM_NONOTIFY | TPM_RETURNCMD | TPM_LEFTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, 0, window.hwnd(), NULL);
+			// 2026-11-01 修复：不设前台 + 无 TPM_RIGHTBUTTON 时，发起右键的
+			// 释放事件会立刻选中光标下的第一个菜单项（表现为"右键=中英切换、
+			// 菜单一闪而过"）。MSDN 通知图标菜单配方：置前台 + RIGHTBUTTON +
+			// 结束后 PostMessage(WM_NULL)。
+			::SetForegroundWindow(window.hwnd());
+			UINT ret = ::TrackPopupMenu(popupMenu,
+			                            TPM_NONOTIFY | TPM_RETURNCMD |
+			                                TPM_LEFTALIGN | TPM_BOTTOMALIGN |
+			                                TPM_RIGHTBUTTON,
+			                            pt.x, pt.y, 0, window.hwnd(), NULL);
+			::PostMessage(window.hwnd(), WM_NULL, 0, 0);
 			if (ret > 0)
 				service->onCommand(ret, TextService::COMMAND_MENU);
 			::DestroyMenu(popupMenu);
