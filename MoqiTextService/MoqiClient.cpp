@@ -1906,16 +1906,29 @@ bool Client::ensureLauncherRunning() {
     return false;
   }
 
-  std::wstring launcherPath = module->programDir();
-  launcherPath += L"\\MoqiLaunch.exe";
-  const DWORD attrs = ::GetFileAttributesW(launcherPath.c_str());
+  // 2026-11-02 阶段5c：MoqiDaemon.exe --serve 自己就是管道服务端
+  //（MoqiLaunch 的职责已并入）。优先拉它；老安装没有 daemon 时回退
+  // MoqiLaunch.exe（退休期兼容，下个版本移除回退）。
+  std::wstring execPath = module->programDir();
+  execPath += L"\\MoqiDaemon.exe";
+  std::wstring commandLine = L"\"" + execPath + L"\" --serve";
+  DWORD attrs = ::GetFileAttributesW(execPath.c_str());
   if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-    return false;
+    execPath = module->programDir();
+    execPath += L"\\MoqiLaunch.exe";
+    commandLine = L"\"" + execPath + L"\"";
+    attrs = ::GetFileAttributesW(execPath.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES ||
+        (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+      return false;
+    }
+    appendRpcGuardLog(L"[ensureLauncher] fallback to MoqiLaunch.exe");
+  } else {
+    appendRpcGuardLog(L"[ensureLauncher] launching MoqiDaemon.exe --serve");
   }
 
   // Use CreateProcessW instead of ShellExecuteW: it cannot fail on the secure
   // desktop / early logon and we control the working directory explicitly.
-  std::wstring commandLine = L"\"" + launcherPath + L"\"";
   STARTUPINFOW startupInfo = {};
   startupInfo.cb = sizeof(startupInfo);
   PROCESS_INFORMATION processInfo = {};
@@ -1953,23 +1966,28 @@ bool Client::forceRestartLauncher() {
     return false;
   }
   lastLauncherKillTick_ = now;
-  appendRpcGuardLog(L"[launcher] force-restarting unreachable MoqiLauncher");
+  appendRpcGuardLog(L"[launcher] force-restarting unreachable backend host");
 
   wchar_t systemDir[MAX_PATH] = {};
   if (::GetSystemDirectoryW(systemDir, _countof(systemDir)) == 0) {
     return false;
   }
   std::wstring taskkillPath = std::wstring(systemDir) + L"\\taskkill.exe";
-  std::wstring commandLine =
-      L"\"" + taskkillPath + L"\" /F /IM MoqiLaunch.exe";
-  STARTUPINFOW startupInfo = {};
-  startupInfo.cb = sizeof(startupInfo);
-  PROCESS_INFORMATION processInfo = {};
-  if (::CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo,
-                       &processInfo)) {
-    ::CloseHandle(processInfo.hThread);
-    ::CloseHandle(processInfo.hProcess);
+  // 阶段5c：daemon（serve 模式）与退休期的 MoqiLaunch 都要清掉，
+  // 否则残留进程继续占着管道。
+  const wchar_t *images[] = {L"MoqiDaemon.exe", L"MoqiLaunch.exe"};
+  for (const wchar_t *image : images) {
+    std::wstring commandLine =
+        L"\"" + taskkillPath + L"\" /F /IM " + image;
+    STARTUPINFOW startupInfo = {};
+    startupInfo.cb = sizeof(startupInfo);
+    PROCESS_INFORMATION processInfo = {};
+    if (::CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, FALSE,
+                         CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo,
+                         &processInfo)) {
+      ::CloseHandle(processInfo.hThread);
+      ::CloseHandle(processInfo.hProcess);
+    }
   }
   // Give the old process (and its children) a moment to die before relaunch.
   ::Sleep(300);

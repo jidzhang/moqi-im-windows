@@ -92,7 +92,7 @@ Name: "{autoprograms}\{#MyAppName}\Logs"; Filename: "{win}\explorer.exe"; Parame
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "MoqiLaunch"; \
-  ValueData: """{app}\MoqiLaunch.exe"""; \
+  ValueData: """{app}\MoqiDaemon.exe"" --serve"; \
   Flags: uninsdeletevalue
 
 [InstallDelete]
@@ -174,7 +174,8 @@ end;
 
 procedure StopMoqiProcesses;
 begin
-  TryKillProcessImage('MoqiLaunch.exe');
+  TryKillProcessImage('MoqiDaemon.exe');
+TryKillProcessImage('MoqiLaunch.exe');
   TryKillProcessImage('MoqiLauncher.exe');
   TryKillBackendServers;
 end;
@@ -310,7 +311,7 @@ begin
     // 需重启场景不拉起（重启后登录任务/Run 键会拉）。
     if HelperInstallSucceeded and (not HelperInstallNeedsRestart) then
     begin
-      if not Exec(ExpandConstant('{app}\MoqiLaunch.exe'), '',
+      if not Exec(ExpandConstant('{app}\MoqiDaemon.exe'), '--serve',
                   ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ResultCode) then
         Log('Launch MoqiLauncher failed, code ' + IntToStr(ResultCode))
       else
