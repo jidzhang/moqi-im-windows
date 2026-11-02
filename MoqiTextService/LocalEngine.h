@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <json/json.h>
+#include "RimeCore.h"
 #include "LocalRerank.h"
 
 namespace Ime {
@@ -25,135 +26,6 @@ class KeyEvent;
 namespace Moqi {
 
 class TextService;
-
-// Self-contained mirror of librime's flat C API (src/rime_api.h types +
-// exported Rime* wrappers). Kept in sync with the rime.dll we ship; struct
-// versioning via data_size tolerates additive upstream changes.
-namespace rimeapi {
-
-typedef uintptr_t SessionId;
-
-typedef struct {
-  int data_size;
-  const char* shared_data_dir;
-  const char* user_data_dir;
-  const char* distribution_name;
-  const char* distribution_code_name;
-  const char* distribution_version;
-  const char* app_name;
-  const char** modules;
-  int min_log_level;
-  const char* log_dir;
-  const char* prebuilt_data_dir;
-  const char* staging_dir;
-} Traits;
-
-typedef struct {
-  int length;
-  int cursor_pos;
-  int sel_start;
-  int sel_end;
-  char* preedit;
-} Composition;
-
-typedef struct {
-  char* text;
-  char* comment;
-  void* reserved;
-} Candidate;
-
-typedef struct {
-  int page_size;
-  int page_no;
-  int is_last_page;
-  int highlighted_candidate_index;
-  int num_candidates;
-  Candidate* candidates;
-  char* select_keys;
-} Menu;
-
-typedef struct {
-  int data_size;
-  char* text;
-} Commit;
-
-typedef struct {
-  int data_size;
-  Composition composition;
-  Menu menu;
-  char* commit_text_preview;
-  char** select_labels;
-} Context;
-
-typedef struct {
-  void* ptr;
-} Config;
-
-} // namespace rimeapi
-
-// Process-wide rime.dll runtime: LoadLibrary + one-shot setup/initialize/
-// maintenance on a background thread. rime.dll is not concurrency-safe, so
-// every API call must be made while holding mutex().
-class RimeRuntime {
-public:
-  static RimeRuntime& instance();
-
-  // Phase-1 gates: x64 process (we only ship an x64 rime.dll) and no
-  // MOQI_LOCAL_ENGINE=0 override.
-  bool supported();
-
-  // Idempotent. Kicks a background thread that loads rime.dll, seeds the
-  // in-proc user dir and runs deployment. ready() flips true on success.
-  void requestInit(const std::wstring& programDir,
-                   const std::wstring& backendDir);
-
-  bool ready() const { return state_ == State::Ready; }
-  bool failed() const { return state_ == State::Failed; }
-
-  std::mutex& mutex() { return apiMutex_; }
-
-  // Flat API procs; all guaranteed non-null once ready().
-  void (*rimeSetup)(rimeapi::Traits*) = nullptr;
-  void (*rimeInitialize)(rimeapi::Traits*) = nullptr;
-  int (*rimeStartMaintenance)(int fullCheck) = nullptr;
-  void (*rimeJoinMaintenanceThread)() = nullptr;
-  rimeapi::SessionId (*rimeCreateSession)() = nullptr;
-  int (*rimeFindSession)(rimeapi::SessionId) = nullptr;
-  void (*rimeDestroySession)(rimeapi::SessionId) = nullptr;
-  int (*rimeProcessKey)(rimeapi::SessionId, int keycode, int mask) = nullptr;
-  void (*rimeClearComposition)(rimeapi::SessionId) = nullptr;
-  int (*rimeGetCommit)(rimeapi::SessionId, rimeapi::Commit*) = nullptr;
-  void (*rimeFreeCommit)(rimeapi::Commit*) = nullptr;
-  int (*rimeGetContext)(rimeapi::SessionId, rimeapi::Context*) = nullptr;
-  void (*rimeFreeContext)(rimeapi::Context*) = nullptr;
-  void (*rimeSetOption)(rimeapi::SessionId, const char*, int) = nullptr;
-  int (*rimeGetOption)(rimeapi::SessionId, const char*) = nullptr;
-  int (*rimeSelectCandidateOnCurrentPage)(rimeapi::SessionId, int) = nullptr;
-  int (*rimeHighlightCandidateOnCurrentPage)(rimeapi::SessionId, int) = nullptr;
-  int (*rimeChangePage)(rimeapi::SessionId, int backward) = nullptr;
-  int (*rimeGetCurrentSchema)(rimeapi::SessionId, char*, size_t) = nullptr;
-  int (*rimeSchemaOpen)(const char*, rimeapi::Config*) = nullptr;
-  int (*rimeConfigClose)(rimeapi::Config*) = nullptr;
-  int (*rimeConfigSetInt)(rimeapi::Config*, const char*, int) = nullptr;
-
-  const std::wstring& iconDir() const { return iconDir_; }
-  // UTF-8 dirs for the rerank data (set by the init thread).
-  const std::string& sharedDataDirUtf8() const { return sharedDataDirUtf8_; }
-  const std::string& appDataRootUtf8() const { return appDataRootUtf8_; }
-
-private:
-  RimeRuntime() = default;
-  bool loadLibrary(const std::wstring& rimeDir);
-
-  enum class State { Idle, Loading, Ready, Failed };
-  std::mutex stateMutex_; // guards state_ transitions + init thread spawn
-  State state_ = State::Idle;
-  std::mutex apiMutex_; // serializes all rime API calls in this process
-  HMODULE module_ = nullptr;
-  std::wstring iconDir_;
-  std::string sharedDataDirUtf8_;
-  std::string appDataRootUtf8_;
-};
 
 // Per-Client engine facade. Owns one rime session and implements the same
 // per-key semantics as the Go backend's hot path (key translation, dedup,

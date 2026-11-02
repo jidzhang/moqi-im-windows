@@ -5,7 +5,7 @@
 //	one-to-one; data files are shared with the backend.
 //
 #include "LocalRerank.h"
-#include "libIME2/src/Utils.h"
+#include "RimeCore.h"
 
 #include <windows.h>
 #include <algorithm>
@@ -107,7 +107,7 @@ void rotateToFirst(vector<Cand>& candidates, size_t bestIdx) {
 
 uint64_t fileMtime(const string& pathUtf8) {
   WIN32_FILE_ATTRIBUTE_DATA info = {};
-  const wstring wide = utf8ToUtf16(pathUtf8.c_str());
+  const wstring wide = utf8ToWide(pathUtf8.c_str());
   if (!::GetFileAttributesExW(wide.c_str(), GetFileExInfoStandard, &info)) {
     return 0;
   }
@@ -116,7 +116,7 @@ uint64_t fileMtime(const string& pathUtf8) {
 }
 
 string readWholeFile(const string& pathUtf8) {
-  ifstream file(utf8ToUtf16(pathUtf8.c_str()), ios::binary);
+  ifstream file(utf8ToWide(pathUtf8.c_str()), ios::binary);
   if (!file) return "";
   ostringstream buffer;
   buffer << file.rdbuf();
@@ -587,7 +587,7 @@ void TypoMemoryStore::loadLocked(bool force) {
   const uint64_t mtime = fileMtime(path_);
   if (mtime == 0) return;
   if (loadedMtime_ != 0 && mtime <= loadedMtime_) return;
-  ifstream file(utf8ToUtf16(path_.c_str()), ios::binary);
+  ifstream file(utf8ToWide(path_.c_str()), ios::binary);
   if (!file) return;
   unordered_map<string, pair<int, string>> entries;
   string line;
@@ -629,10 +629,10 @@ void TypoMemoryStore::saveLocked() {
         << '\n';
   }
   const string body = out.str();
-  const wstring dir = utf8ToUtf16(path_.substr(0, path_.find_last_of('/'))
+  const wstring dir = utf8ToWide(path_.substr(0, path_.find_last_of('/'))
                                       .c_str());
   ::CreateDirectoryW(dir.c_str(), nullptr);
-  ofstream file(utf8ToUtf16(path_.c_str()),
+  ofstream file(utf8ToWide(path_.c_str()),
                 ios::binary | ios::trunc);
   if (!file) return;
   file.write(body.data(), static_cast<streamsize>(body.size()));

@@ -29,611 +29,28 @@ namespace Moqi {
 
 namespace {
 
-// ---------------------------------------------------------------- paths --
-
-wstring appDataRoamingDir() {
-  wchar_t* appData = nullptr;
-  if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr,
-                                       &appData))) {
-    wstring dir(appData);
-    ::CoTaskMemFree(appData);
-    return dir;
-  }
-  return L"";
+// DLL 侧日志出口：RimeCore 生命周期事件进常开的 key-guard 日志。
+void coreLogToGuardLog(const std::wstring& message) {
+  appendRpcGuardLog(message);
 }
 
-wstring localAppDataDir() {
-  wchar_t* appData = nullptr;
-  if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
-                                       &appData))) {
-    wstring dir(appData);
-    ::CoTaskMemFree(appData);
-    return dir;
-  }
-  return L"";
-}
+struct CoreLogInit {
+  CoreLogInit() { setCoreLogSink(&coreLogToGuardLog); }
+};
+const CoreLogInit g_coreLogInit;
 
-// %APPDATA%\Moqi — shared config root used by the Go backend
-// (moqiAppDataDir(), scheme_set.go).
-wstring moqiAppDataDir() {
-  const wstring roaming = appDataRoamingDir();
-  return roaming.empty() ? L"" : roaming + L"\\Moqi";
-}
-
-// Reads scheme_set.json {"current": "<name>"} with the same defaults as the
-// backend (scheme_set.go); falls back to "Rime".
-wstring currentSchemeSetDirName() {
-  const wstring root = moqiAppDataDir();
-  if (root.empty()) {
-    return L"Rime";
-  }
-  ifstream file(root + L"\\scheme_set.json", ifstream::binary);
-  if (!file) {
-    return L"Rime";
-  }
-  Json::Value cfg;
-  file >> cfg;
-  const Json::Value current = cfg.get("current", "Rime");
-  if (!current.isString()) {
-    return L"Rime";
-  }
-  const wstring name = utf8ToUtf16(current.asCString());
-  if (name.empty() || name == L"." || name == L".." ||
-      name.find_first_of(L"\\/") != wstring::npos) {
-    return L"Rime";
-  }
-  return name;
-}
-
-// --------------------------------------------------------- key constants --
-
-constexpr int kVoidSymbol = 0xFFFFFF;
-constexpr int kRimeBackSpace = 0xFF08;
-constexpr int kRimeTab = 0xFF09;
-constexpr int kRimeClear = 0xFF0B;
-constexpr int kRimeReturn = 0xFF0D;
-constexpr int kRimePause = 0xFF13;
-constexpr int kRimeCapsLock = 0xFFE5;
-constexpr int kRimeEscape = 0xFF1B;
-constexpr int kRimePrior = 0xFF55;
-constexpr int kRimeNext = 0xFF56;
-constexpr int kRimeEnd = 0xFF57;
-constexpr int kRimeHome = 0xFF50;
-constexpr int kRimeLeft = 0xFF51;
-constexpr int kRimeUp = 0xFF52;
-constexpr int kRimeRight = 0xFF53;
-constexpr int kRimeDown = 0xFF54;
-constexpr int kRimeSelect = 0xFF60;
-constexpr int kRimePrint = 0xFF61;
-constexpr int kRimeExecute = 0xFF62;
-constexpr int kRimeInsert = 0xFF63;
-constexpr int kRimeDelete = 0xFFFF;
-constexpr int kRimeHelp = 0xFF6A;
-constexpr int kRimeMetaL = 0xFFE7;
-constexpr int kRimeMetaR = 0xFFE8;
-constexpr int kRimeNumLock = 0xFF7F;
-constexpr int kRimeScrollLock = 0xFF14;
-constexpr int kRimeShiftL = 0xFFE1;
-constexpr int kRimeShiftR = 0xFFE2;
-constexpr int kRimeControlL = 0xFFE3;
-constexpr int kRimeControlR = 0xFFE4;
-constexpr int kRimeAltL = 0xFFE9;
-constexpr int kRimeAltR = 0xFFEA;
-constexpr int kRimeF1 = 0xFFBE;
-
-constexpr int kShiftMask = 1 << 0;
-constexpr int kLockMask = 1 << 1;
-constexpr int kControlMask = 1 << 2;
-constexpr int kAltMask = 1 << 3;
-constexpr int kReleaseMask = 1 << 30;
-
-constexpr UINT vkBack = 0x08;
-constexpr UINT vkTab = 0x09;
-constexpr UINT vkClear = 0x0C;
-constexpr UINT vkReturn = 0x0D;
-constexpr UINT vkShift = 0x10;
-constexpr UINT vkControl = 0x11;
-constexpr UINT vkMenu = 0x12;
-constexpr UINT vkPause = 0x13;
-constexpr UINT vkCapital = 0x14;
-constexpr UINT vkEscape = 0x1B;
-constexpr UINT vkSpace = 0x20;
-constexpr UINT vkPrior = 0x21;
-constexpr UINT vkNext = 0x22;
-constexpr UINT vkEnd = 0x23;
-constexpr UINT vkHome = 0x24;
-constexpr UINT vkLeft = 0x25;
-constexpr UINT vkUp = 0x26;
-constexpr UINT vkRight = 0x27;
-constexpr UINT vkDown = 0x28;
-constexpr UINT vkSelect = 0x29;
-constexpr UINT vkPrint = 0x2A;
-constexpr UINT vkExecute = 0x2B;
-constexpr UINT vkInsert = 0x2D;
-constexpr UINT vkDelete = 0x2E;
-constexpr UINT vkHelp = 0x2F;
-constexpr UINT vkLWin = 0x5B;
-constexpr UINT vkRWin = 0x5C;
-constexpr UINT vkNumLock = 0x90;
-constexpr UINT vkScroll = 0x91;
-constexpr UINT vkLShift = 0xA0;
-constexpr UINT vkRShift = 0xA1;
-constexpr UINT vkLControl = 0xA2;
-constexpr UINT vkRControl = 0xA3;
-constexpr UINT vkLMenu = 0xA4;
-constexpr UINT vkRMenu = 0xA5;
-constexpr UINT vkOem3 = 0xC0;
-constexpr UINT vkF1 = 0x70;
-constexpr UINT vkF12 = 0x7B;
-constexpr UINT vkOem1 = 0xBA; // ';'
-
-constexpr int scanCodeShiftL = 0x2A;
-constexpr int scanCodeShiftR = 0x36;
-constexpr int scanCodeCtrl = 0x1D;
-
-constexpr wchar_t kSecondSelectChar = L';';
-
-int mapVirtualKey(UINT keyCode) {
-  switch (keyCode) {
-  case vkBack: return kRimeBackSpace;
-  case vkTab: return kRimeTab;
-  case vkClear: return kRimeClear;
-  case vkReturn: return kRimeReturn;
-  case vkMenu: return kRimeAltL;
-  case vkPause: return kRimePause;
-  case vkCapital: return kRimeCapsLock;
-  case vkEscape: return kRimeEscape;
-  case vkSpace: return 0x020;
-  case vkPrior: return kRimePrior;
-  case vkNext: return kRimeNext;
-  case vkEnd: return kRimeEnd;
-  case vkHome: return kRimeHome;
-  case vkLeft: return kRimeLeft;
-  case vkUp: return kRimeUp;
-  case vkRight: return kRimeRight;
-  case vkDown: return kRimeDown;
-  case vkSelect: return kRimeSelect;
-  case vkPrint: return kRimePrint;
-  case vkExecute: return kRimeExecute;
-  case vkInsert: return kRimeInsert;
-  case vkDelete: return kRimeDelete;
-  case vkHelp: return kRimeHelp;
-  case vkLWin: return kRimeMetaL;
-  case vkRWin: return kRimeMetaR;
-  case vkNumLock: return kRimeNumLock;
-  case vkScroll: return kRimeScrollLock;
-  case vkLShift: return kRimeShiftL;
-  case vkRShift: return kRimeShiftR;
-  case vkLControl: return kRimeControlL;
-  case vkRControl: return kRimeControlR;
-  case vkLMenu: return kRimeAltL;
-  case vkRMenu: return kRimeAltR;
-  case vkOem3: return '`';
-  default: return 0;
-  }
-}
-
-bool isPrintableChar(Ime::KeyEvent& e) {
-  const UINT charCode = e.charCode();
-  return charCode > 0x1f && charCode != 0x7f;
-}
-
-int shiftSide(Ime::KeyEvent& e) {
-  if (e.scanCode() == scanCodeShiftR) {
-    return vkRShift;
-  }
-  if (e.scanCode() == scanCodeShiftL) {
-    return vkLShift;
-  }
-  const BYTE* states = e.keyStates();
-  const bool rShiftDown = (states[vkRShift] & 0x80) != 0;
-  const bool lShiftDown = (states[vkLShift] & 0x80) != 0;
-  if (rShiftDown && !lShiftDown) {
-    return vkRShift;
-  }
-  return vkLShift;
-}
-
-int controlSide(Ime::KeyEvent& e) {
-  if (e.scanCode() == scanCodeCtrl && e.isExtended()) {
-    return vkRControl;
-  }
-  if (e.scanCode() == 0) {
-    const BYTE* states = e.keyStates();
-    const bool rCtrlDown = (states[vkRControl] & 0x80) != 0;
-    const bool lCtrlDown = (states[vkLControl] & 0x80) != 0;
-    if (rCtrlDown && !lCtrlDown) {
-      return vkRControl;
-    }
-  }
-  return vkLControl;
-}
-
-// Port of rime_keyevent.go translateKeyCode.
-int translateKeyCode(Ime::KeyEvent& e) {
-  UINT keyCode = e.keyCode();
-  if (keyCode == vkShift) {
-    keyCode = static_cast<UINT>(shiftSide(e));
-  } else if (keyCode == vkControl) {
-    keyCode = static_cast<UINT>(controlSide(e));
-  }
-
-  const int mapped = mapVirtualKey(keyCode);
-  if (mapped != 0) {
-    // OEM_3 is the only printable key in the constant map; Shift+` already
-    // carries '~' as charCode, which must win (2026-10-29 backend fix).
-    if (keyCode == vkOem3 && isPrintableChar(e) && e.charCode() != '`') {
-      return static_cast<int>(e.charCode());
-    }
-    return mapped;
-  }
-  if (isPrintableChar(e)) {
-    return static_cast<int>(e.charCode());
-  }
-  if (keyCode >= vkF1 && keyCode <= vkF12) {
-    return kRimeF1 + static_cast<int>(keyCode) - vkF1;
-  }
-  return kVoidSymbol;
-}
-
-// Port of rime_keyevent.go translateModifiers.
-int translateModifiers(Ime::KeyEvent& e, bool isUp) {
-  const BYTE* states = e.keyStates();
-  const UINT keyCode = e.keyCode();
-  int result = 0;
-  if (keyCode != vkShift && (states[vkShift] & 0x80) != 0) {
-    result |= kShiftMask;
-  }
-  if ((states[vkCapital] & 1) != 0) {
-    result |= kLockMask;
-  }
-  if (keyCode != vkControl && (states[vkControl] & 0x80) != 0) {
-    result |= kControlMask;
-  }
-  if (keyCode != vkMenu && (states[vkMenu] & 0x80) != 0) {
-    result |= kAltMask;
-  }
-  if (isUp) {
-    result |= kReleaseMask;
-  }
-  if (keyCode == vkCapital && !isUp) {
-    result ^= kLockMask;
-  }
-  return result;
-}
-
-bool isBareShiftKeyCode(UINT keyCode) { return keyCode == vkShift; }
-
-// Only Shift (toggles via release) and CapsLock have meaningful releases for
-// the engine; forwarding ordinary key releases disturbs sentence context.
-bool isKeyReleaseRelevantForBackend(UINT keyCode) {
-  return keyCode == vkShift || keyCode == vkCapital;
-}
-
-bool isSecondSelectionShortcut(Ime::KeyEvent& e) {
-  const BYTE* states = e.keyStates();
-  if ((states[vkShift] & 0x80) != 0 || (states[vkControl] & 0x80) != 0 ||
-      (states[vkMenu] & 0x80) != 0) {
-    return false;
-  }
-  if (e.keyCode() == vkOem1) {
-    return true;
-  }
-  return e.charCode() != 0 && e.charCode() == kSecondSelectChar;
-}
-
-int selectionShortcutConsumeCode(Ime::KeyEvent& e) {
-  if (isSecondSelectionShortcut(e)) {
-    return kSecondSelectChar;
-  }
-  if (e.charCode() >= '1' && e.charCode() <= '9') {
-    return static_cast<int>(e.charCode());
-  }
-  if (e.keyCode() >= '1' && e.keyCode() <= '9') {
-    return static_cast<int>(e.keyCode());
-  }
-  if (e.keyCode() != 0) {
-    return static_cast<int>(e.keyCode());
-  }
-  return static_cast<int>(e.charCode());
-}
-
-// Port of compositionCaretRuneIndex: UTF-8 byte position -> code point index.
-int compositionCaretRuneIndex(const string& composition, int caretBytePos) {
-  if (caretBytePos <= 0 || composition.empty()) {
-    return 0;
-  }
-  const auto countRunes = [&composition](size_t end) {
-    int runes = 0;
-    for (size_t i = 0; i < end;) {
-      unsigned char c = static_cast<unsigned char>(composition[i]);
-      size_t step = 1;
-      if ((c & 0xE0) == 0xC0) {
-        step = 2;
-      } else if ((c & 0xF0) == 0xE0) {
-        step = 3;
-      } else if ((c & 0xF8) == 0xF0) {
-        step = 4;
-      }
-      i += step;
-      ++runes;
-    }
-    return runes;
-  };
-  const size_t len = composition.size();
-  if (caretBytePos >= static_cast<int>(len)) {
-    return countRunes(len);
-  }
-  return countRunes(static_cast<size_t>(caretBytePos));
-}
-
-// ------------------------------------------------------------ file utils --
-
-void appendLocalEngineLog(const wstring& message) {
-  // Reuse the always-on key guard log: low-frequency lifecycle events only.
-  appendRpcGuardLog(L"[local-engine] " + message);
-}
-
-string readFileUtf8(const wstring& path) {
-  ifstream file(path, ios::binary);
-  if (!file) {
-    return "";
-  }
-  ostringstream buffer;
-  buffer << file.rdbuf();
-  return buffer.str();
-}
-
-void writeFileUtf8(const wstring& path, const string& content) {
-  ofstream file(path, ios::binary | ios::trunc);
-  if (!file) {
-    return;
-  }
-  file.write(content.data(), static_cast<streamsize>(content.size()));
-}
-
-// Builds the in-proc rime_frost.custom.yaml: the backend's generated patch
-// (engine behavior parity: grammar, typo edges, mixed-input learning rules).
-// 阶段3（2026-11-01）：用户词典开启。实测 rime userdb（leveldb 封装）在本
-// 构建上锁文件不互斥——多进程并发开同一库可写、数据合并无损（试验台
-// udbtest 双进程交叉提交验证，见 24-交接）。进程内学习即时生效，跨进程
-// 学习在对方下次启动时可见。
-string buildInProcCustomPatch(const wstring& backendUserDir) {
-  const string backendPatch =
-      readFileUtf8(backendUserDir + L"\\rime_frost.custom.yaml");
-  string body = "# managed by moqi local engine\npatch:\n";
-  if (!backendPatch.empty()) {
-    istringstream stream(backendPatch);
-    string line;
-    while (getline(stream, line)) {
-      if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-      }
-      if (line.empty() || line[0] == '#' || line.rfind("patch:", 0) == 0) {
-        continue;
-      }
-      body += line;
-      body += '\n';
-    }
-  }
-  return body;
+// Ime::KeyEvent -> RimeCore 的解耦键值载荷。
+KeyEventData keyDataOf(Ime::KeyEvent& e) {
+  KeyEventData d;
+  d.keyCode = e.keyCode();
+  d.charCode = e.charCode();
+  d.scanCode = e.scanCode();
+  d.isExtended = e.isExtended();
+  d.keyStates = e.keyStates();
+  return d;
 }
 
 } // namespace
-
-// =========================================================== RimeRuntime ==
-
-RimeRuntime& RimeRuntime::instance() {
-  static RimeRuntime runtime;
-  return runtime;
-}
-
-bool RimeRuntime::supported() {
-#ifdef _WIN64
-  // We only ship an x64 rime.dll; the x86 TSF DLL stays on the RPC path.
-  wchar_t value[8] = {};
-  const DWORD len =
-      ::GetEnvironmentVariableW(L"MOQI_LOCAL_ENGINE", value, _countof(value));
-  return !(len > 0 && len < _countof(value) && wcscmp(value, L"0") == 0);
-#else
-  return false;
-#endif
-}
-
-bool RimeRuntime::loadLibrary(const wstring& rimeDir) {
-  const wstring dllPath = rimeDir + L"\\rime.dll";
-  const DWORD attrs = ::GetFileAttributesW(dllPath.c_str());
-  if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-    appendLocalEngineLog(L"rime.dll not found: " + dllPath +
-                         L" attrs=" + to_wstring(attrs));
-    return false;
-  }
-  // LOAD_WITH_ALTERED_SEARCH_PATH resolves rime.dll's dependencies from its
-  // own directory instead of the host app's. Retry on the transient errors a
-  // freshly deployed DLL can hit (AV on-access scan holding the file).
-  for (int attempt = 0;; ++attempt) {
-    module_ = ::LoadLibraryExW(dllPath.c_str(), nullptr,
-                               LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (module_ != nullptr) {
-      break;
-    }
-    const DWORD err = ::GetLastError();
-    const bool transient =
-        err == ERROR_SHARING_VIOLATION || err == ERROR_ACCESS_DENIED ||
-        err == ERROR_LOCK_VIOLATION;
-    appendLocalEngineLog(L"LoadLibraryExW failed: " + dllPath + L" err=" +
-                         to_wstring(err) + L" attempt=" + to_wstring(attempt));
-    if (!transient || attempt >= 4) {
-      return false;
-    }
-    ::Sleep(300);
-  }
-
-#define RESOLVE_PROC(name, var)                                                \
-  do {                                                                         \
-    var = reinterpret_cast<decltype(var)>(                                     \
-        (void*)::GetProcAddress(module_, name));                               \
-    if (var == nullptr) {                                                      \
-      return false;                                                            \
-    }                                                                          \
-  } while (0)
-
-  RESOLVE_PROC("RimeSetup", rimeSetup);
-  RESOLVE_PROC("RimeInitialize", rimeInitialize);
-  RESOLVE_PROC("RimeStartMaintenance", rimeStartMaintenance);
-  RESOLVE_PROC("RimeJoinMaintenanceThread", rimeJoinMaintenanceThread);
-  RESOLVE_PROC("RimeCreateSession", rimeCreateSession);
-  RESOLVE_PROC("RimeFindSession", rimeFindSession);
-  RESOLVE_PROC("RimeDestroySession", rimeDestroySession);
-  RESOLVE_PROC("RimeProcessKey", rimeProcessKey);
-  RESOLVE_PROC("RimeClearComposition", rimeClearComposition);
-  RESOLVE_PROC("RimeGetCommit", rimeGetCommit);
-  RESOLVE_PROC("RimeFreeCommit", rimeFreeCommit);
-  RESOLVE_PROC("RimeGetContext", rimeGetContext);
-  RESOLVE_PROC("RimeFreeContext", rimeFreeContext);
-  RESOLVE_PROC("RimeSetOption", rimeSetOption);
-  RESOLVE_PROC("RimeGetOption", rimeGetOption);
-  RESOLVE_PROC("RimeSelectCandidateOnCurrentPage",
-               rimeSelectCandidateOnCurrentPage);
-  RESOLVE_PROC("RimeGetCurrentSchema", rimeGetCurrentSchema);
-  // Optional exports: upstream defines these static (api-struct only) in
-  // some builds; absence degrades gracefully like Go's procAvailable.
-  rimeHighlightCandidateOnCurrentPage =
-      reinterpret_cast<decltype(rimeHighlightCandidateOnCurrentPage)>(
-          (void*)::GetProcAddress(module_,
-                                  "RimeHighlightCandidateOnCurrentPage"));
-  rimeChangePage = reinterpret_cast<decltype(rimeChangePage)>(
-      (void*)::GetProcAddress(module_, "RimeChangePage"));
-  RESOLVE_PROC("RimeSchemaOpen", rimeSchemaOpen);
-  RESOLVE_PROC("RimeConfigClose", rimeConfigClose);
-  RESOLVE_PROC("RimeConfigSetInt", rimeConfigSetInt);
-#undef RESOLVE_PROC
-
-  iconDir_ = rimeDir + L"\\icons";
-  return true;
-}
-
-void RimeRuntime::requestInit(const wstring& programDir,
-                              const wstring& backendDir) {
-  std::lock_guard<std::mutex> stateLock(stateMutex_);
-  if (state_ != State::Idle) {
-    return;
-  }
-  state_ = State::Loading;
-  thread([this, programDir, backendDir]() {
-    const wstring rimeDir =
-        programDir + L"\\" + backendDir + L"\\input_methods\\rime";
-    if (!loadLibrary(rimeDir)) {
-      std::lock_guard<std::mutex> lock(stateMutex_);
-      state_ = State::Failed;
-      return;
-    }
-
-    const wstring appDataRoot = moqiAppDataDir();
-    const wstring backendUserDir =
-        appDataRoot.empty() ? L"" : appDataRoot + L"\\" + currentSchemeSetDirName();
-    if (appDataRoot.empty() || backendUserDir.empty()) {
-      std::lock_guard<std::mutex> lock(stateMutex_);
-      state_ = State::Failed;
-      return;
-    }
-    const wstring sharedDir = rimeDir + L"\\data";
-    const wstring userDir = appDataRoot + L"\\RimeInProc";
-    const wstring prebuiltDir = backendUserDir + L"\\build";
-
-    error_code ec;
-    filesystem::create_directories(userDir, ec);
-    if (ec) {
-      appendLocalEngineLog(L"create user dir failed: " + userDir);
-      std::lock_guard<std::mutex> lock(stateMutex_);
-      state_ = State::Failed;
-      return;
-    }
-
-    // Seed the engine-behavior patch before deployment picks it up.
-    const string patch = buildInProcCustomPatch(backendUserDir);
-    const wstring patchPath = userDir + L"\\rime_frost.custom.yaml";
-    if (readFileUtf8(patchPath) != patch) {
-      writeFileUtf8(patchPath, patch);
-    }
-
-    // 阶段3种子：RimeInProc 首次启用用户词典时，把后端已积累的学习数据
-    // 带过来（leveldb 拷贝中的撕裂由打开时的 recovery 自愈）。
-    const wstring srcUserDb = backendUserDir + L"\\rime_frost.userdb";
-    const wstring dstUserDb = userDir + L"\\rime_frost.userdb";
-    if (!filesystem::exists(dstUserDb) && filesystem::exists(srcUserDb)) {
-      error_code copyEc;
-      filesystem::copy(srcUserDb, dstUserDb,
-                       filesystem::copy_options::recursive, copyEc);
-    }
-
-    // Cross-process gate: only one app process runs the first deployment
-    // into the shared in-proc dir; the others then find it up to date.
-    HANDLE initMutex = ::CreateMutexW(nullptr, TRUE, L"MoqiRimeInProcInit");
-    bool locked = initMutex != nullptr;
-    if (locked && ::GetLastError() == ERROR_ALREADY_EXISTS) {
-      locked = ::WaitForSingleObject(initMutex, 30000) == WAIT_OBJECT_0;
-    }
-    if (!locked) {
-      if (initMutex != nullptr) {
-        ::CloseHandle(initMutex);
-      }
-      appendLocalEngineLog(L"init mutex acquisition failed");
-      std::lock_guard<std::mutex> lock(stateMutex_);
-      state_ = State::Failed;
-      return;
-    }
-
-    const string sharedDirUtf8 = utf16ToUtf8(sharedDir.c_str());
-    const string userDirUtf8 = utf16ToUtf8(userDir.c_str());
-    const string prebuiltUtf8 = utf16ToUtf8(prebuiltDir.c_str());
-    const string stagingUtf8 = utf16ToUtf8((userDir + L"\\build").c_str());
-    const string appDataRootUtf8 = utf16ToUtf8(appDataRoot.c_str());
-    wstring logDirW = localAppDataDir();
-    if (!logDirW.empty()) {
-      logDirW += L"\\MoqiIM\\Log";
-      filesystem::create_directories(logDirW, ec);
-    }
-    const string logDirUtf8 =
-        logDirW.empty() ? string() : utf16ToUtf8(logDirW.c_str());
-
-    {
-      std::lock_guard<std::mutex> apiLock(apiMutex_);
-      rimeapi::Traits traits = {};
-      traits.data_size = static_cast<int>(sizeof(rimeapi::Traits) -
-                                          sizeof(traits.data_size));
-      traits.shared_data_dir = sharedDirUtf8.c_str();
-      traits.user_data_dir = userDirUtf8.c_str();
-      traits.distribution_name = "Rime";
-      traits.distribution_code_name = "Moqi";
-      traits.distribution_version = "inproc";
-      traits.app_name = "Rime.Moqi";
-      traits.min_log_level = 2; // error, matches product default
-      traits.log_dir = logDirUtf8.c_str();
-      traits.prebuilt_data_dir = prebuiltUtf8.c_str();
-      traits.staging_dir = stagingUtf8.c_str();
-      rimeSetup(&traits);
-      rimeInitialize(&traits);
-      // A false return also means "no changes detected" (nothing to
-      // deploy); join is a no-op when maintenance never started.
-      rimeStartMaintenance(FALSE);
-      rimeJoinMaintenanceThread();
-    }
-
-    sharedDataDirUtf8_ = sharedDirUtf8;
-    appDataRootUtf8_ = appDataRootUtf8;
-    // 阶段2重排数据在后台线程预载（bigram TSV 3.4MB），不占首键时间。
-    RerankData::instance().ensureLoaded(sharedDirUtf8, appDataRootUtf8);
-    TypoMemoryStore::instance().ensureLoaded(appDataRootUtf8);
-
-    ::ReleaseMutex(initMutex);
-    ::CloseHandle(initMutex);
-
-    std::lock_guard<std::mutex> lock(stateMutex_);
-    state_ = State::Ready;
-    appendLocalEngineLog(L"engine ready, user dir=" + userDir);
-  }).detach();
-}
 
 // ============================================================ LocalEngine ==
 
@@ -837,7 +254,7 @@ void LocalEngine::updateTrackedRawInput(Ime::KeyEvent& e, UINT keyCode,
   }
   const bool digit =
       (keyCode >= '1' && keyCode <= '9') || (ch >= '1' && ch <= '9');
-  if (digit || (semicolonSelectSecond_ && isSecondSelectionShortcut(e))) {
+  if (digit || (semicolonSelectSecond_ && isSecondSelectionShortcut(keyDataOf(e)))) {
     snapshotRawInputForCommit();
     return;
   }
@@ -877,8 +294,8 @@ bool LocalEngine::processKey(Ime::KeyEvent& e, bool isUp, bool* ret) {
     beforeState = currentState(&engineOk);
   }
 
-  const int keycode0 = translateKeyCode(e);
-  const int mask = translateModifiers(e, isUp);
+  const int keycode0 = translateKeyCode(keyDataOf(e));
+  const int mask = translateModifiers(keyDataOf(e), isUp);
   int keycode = keycode0;
   // 重排后的索引换算：显示序与引擎序不一致时，空格/数字指向显示位次，
   // 必须换算成引擎索引再发给引擎（否则按 2 选错词——历史实报教训）。
@@ -1123,7 +540,7 @@ void LocalEngine::buildResponse(const EngineState& state, bool allowCommit,
 
 bool LocalEngine::handleSecondSelectionFilterDown(Ime::KeyEvent& e,
                                                   Json::Value& resp) {
-  if (!semicolonSelectSecond_ || !isSecondSelectionShortcut(e)) {
+  if (!semicolonSelectSecond_ || !isSecondSelectionShortcut(keyDataOf(e))) {
     return false;
   }
   bool engineOk = false;
@@ -1131,7 +548,7 @@ bool LocalEngine::handleSecondSelectionFilterDown(Ime::KeyEvent& e,
   if (!engineOk || state.composition.empty() || state.candidates.size() < 2) {
     return false;
   }
-  secondSelectConsumeKeyUpCode_ = selectionShortcutConsumeCode(e);
+  secondSelectConsumeKeyUpCode_ = selectionShortcutConsumeCode(keyDataOf(e));
   resp["returnValue"] = 1;
   return true;
 }
@@ -1139,7 +556,7 @@ bool LocalEngine::handleSecondSelectionFilterDown(Ime::KeyEvent& e,
 bool LocalEngine::handleSecondSelectionDown(Ime::KeyEvent& e,
                                             Json::Value& resp) {
   if (secondSelectConsumeKeyUpCode_ == 0 ||
-      selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
+      selectionShortcutConsumeCode(keyDataOf(e)) != secondSelectConsumeKeyUpCode_) {
     return false;
   }
   bool engineOk = false;
@@ -1166,7 +583,7 @@ bool LocalEngine::handleSecondSelectionDown(Ime::KeyEvent& e,
 bool LocalEngine::handleSecondSelectionFilterUp(Ime::KeyEvent& e,
                                                 Json::Value& resp) {
   if (secondSelectConsumeKeyUpCode_ == 0 ||
-      selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
+      selectionShortcutConsumeCode(keyDataOf(e)) != secondSelectConsumeKeyUpCode_) {
     return false;
   }
   resp["returnValue"] = 1;
@@ -1176,7 +593,7 @@ bool LocalEngine::handleSecondSelectionFilterUp(Ime::KeyEvent& e,
 bool LocalEngine::handleSecondSelectionUp(Ime::KeyEvent& e,
                                           Json::Value& resp) {
   if (secondSelectConsumeKeyUpCode_ == 0 ||
-      selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
+      selectionShortcutConsumeCode(keyDataOf(e)) != secondSelectConsumeKeyUpCode_) {
     return false;
   }
   secondSelectConsumeKeyUpCode_ = 0;

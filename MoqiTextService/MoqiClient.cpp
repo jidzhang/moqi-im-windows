@@ -713,9 +713,13 @@ void Client::updatePreservedKeys(Json::Value &msg) {
 }
 
 void Client::updateKeyboardStatus(Json::Value &msg) {
+  // 2026-11-01 事故修复：EmitUnpopulated 后 openKeyboard:false 出现在每个
+  // 响应里（Go 侧从未把它当"关闭"指令用，false 只是零值）——旧协议里 false
+  // 被省略、DLL 只在收到 true 时开键盘。这里恢复"只在 true 时动作"语义，
+  // 否则每条 RPC 回复都会把键盘关掉（x86 应用全裸英文 + 重连风暴根因）。
   const auto &openKeyboardVal = msg["openKeyboard"];
-  if (openKeyboardVal.isBool()) {
-    textService_->setKeyboardOpen(openKeyboardVal.asBool());
+  if (openKeyboardVal.isBool() && openKeyboardVal.asBool()) {
+    textService_->setKeyboardOpen(true);
   }
 }
 
@@ -898,6 +902,9 @@ void Client::onActivate() {
   activationInProgress_.store(false, std::memory_order_release);
   isActivated_ = true;
   connectAttempts_ = MAX_CONNECT_ATTEMPTS;
+  // 2026-11-01 回滚：激活时强制 setKeyboardOpen 会触发 compartment 变更 →
+  // 再次激活回调 → 激活风暴（后端每秒重连，RPC 全瘫）。此路不通，键盘
+  // 开关残留问题另行处理。
   // 阶段1：激活即后台初始化进程内引擎，首个空闲按键点完成接管。
   requestLocalEngineInit(textService_);
 }
@@ -1146,6 +1153,9 @@ bool Client::onPreservedKey(const GUID &guid, Ime::EditSession *session) {
 }
 
 bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
+  appendRpcGuardLog(L"[onCommand] id=" + std::to_wstring(id) +
+                    L" type=" + std::to_wstring(static_cast<int>(type)) +
+                    L" local=" + (localEngine_.active() ? L"1" : L"0"));
   auto req = createRpcRequest("onCommand");
   req["commandId"] = id;
   req["commandType"] = static_cast<int>(type);
@@ -1159,6 +1169,7 @@ bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
 }
 
 bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
+  appendRpcGuardLog(L"[onMenu] button=" + utf8ToUtf16(button_id.c_str()));
   auto req = createRpcRequest("onMenu");
   req["buttonId"] = button_id;
 
