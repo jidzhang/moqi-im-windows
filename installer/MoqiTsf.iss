@@ -41,6 +41,9 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf32}\MoqiIM
+; 2026-11-02 用户定：覆盖安装不弹"文件夹已存在，是否继续"确认框（默认 auto
+; 会在目录页下一步时弹模态框，用户容易懵圈），直接装入既有目录。
+DirExistsWarning=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64
