@@ -94,8 +94,12 @@ public:
 
   // Idempotent. Kicks a background thread that loads rime.dll, seeds the
   // in-proc user dir and runs deployment. ready() flips true on success.
+  // dllDir：rime.dll 的查找目录，缺省 = rimeDir（programDir\backendDir\
+  // input_methods\rime）。x86 MoqiDaemon 传自己的目录——同一安装里
+  // moqi-ime\...\rime.dll 是 x64（Go 后端/x64 TSF DLL 用），x86 版放安装根。
   void requestInit(const std::wstring& programDir,
-                   const std::wstring& backendDir);
+                   const std::wstring& backendDir,
+                   const std::wstring& dllDir = L"");
 
   bool ready() const { return state_ == State::Ready; }
   bool failed() const { return state_ == State::Failed; }

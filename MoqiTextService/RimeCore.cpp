@@ -454,17 +454,18 @@ bool RimeRuntime::loadLibrary(const wstring& rimeDir) {
 }
 
 void RimeRuntime::requestInit(const wstring& programDir,
-                              const wstring& backendDir) {
+                              const wstring& backendDir,
+                              const wstring& dllDir) {
   std::lock_guard<std::mutex> stateLock(stateMutex_);
   if (state_ != State::Idle) {
     return;
   }
   state_ = State::Loading;
-  thread([this, programDir, backendDir]() {
+  thread([this, programDir, backendDir, dllDir]() {
     appendLocalEngineLog(L"init thread begin");
     const wstring rimeDir =
         programDir + L"\\" + backendDir + L"\\input_methods\\rime";
-    if (!loadLibrary(rimeDir)) {
+    if (!loadLibrary(dllDir.empty() ? rimeDir : dllDir)) {
       std::lock_guard<std::mutex> lock(stateMutex_);
       state_ = State::Failed;
       return;

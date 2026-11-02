@@ -190,6 +190,21 @@ $setupHelper = Resolve-ArtifactPath -Label "SetupHelper.exe" -Candidates @(
 )
 Copy-IfExists -Source $setupHelper -Destination (Join-Path $stageWin32Root "SetupHelper.exe")
 
+# Phase 5a: MoqiDaemon (x86) fronts the hot path; backends.json points at it.
+# Missing daemon or x86 rime.dll would leave the install with a dead key path,
+# so both are hard requirements (backends.json command must match the file name).
+$daemon = Resolve-ArtifactPath -Label "MoqiDaemon.exe" -Candidates @(
+    (Join-Path $RepoRoot "..\moqi-daemon\build-x86\Release\MoqiDaemon.exe")
+)
+Copy-Item -LiteralPath $daemon -Destination (Join-Path $stageWin32Root "MoqiDaemon.exe") -Force
+
+# x86 rime.dll for the daemon engine: installed at the app root next to it.
+# moqi-ime\input_methods\rime\rime.dll stays x64 (Go child / x64 TSF DLL).
+$rimex86 = Resolve-ArtifactPath -Label "x86 rime.dll (daemon)" -Candidates @(
+    (Join-Path $RepoRoot "..\librime\build-x86\bin\Release\rime.dll")
+)
+Copy-Item -LiteralPath $rimex86 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
+
 $dll32 = Resolve-ArtifactPath -Label "Win32 MoqiTextService.dll" -Candidates @(
     (Join-Path $Win32BuildDir "MoqiTextService.dll"),
     (Join-Path $Win32BuildDir "Release\MoqiTextService.dll"),

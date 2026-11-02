@@ -1,7 +1,7 @@
 [
     {
         "name": "moqi-ime",
-        "command": "moqi-ime\\MoqiIME.exe",
+        "command": "MoqiDaemon.exe",
         "workingDir": "moqi-ime",
         "params": ""
     }
