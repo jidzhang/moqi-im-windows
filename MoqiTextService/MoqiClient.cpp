@@ -975,15 +975,34 @@ bool Client::waitForRpcIdleForFirstKey() const {
 bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   // 阶段1：进程内引擎优先；接管点要求无组字/无候选/无在途异步响应。
   maybeEngageLocalEngine();
+  // 2026-11-02：异步轮询必须在本地引擎路径也跑起来——外部进程（daemon）
+  // 的推送（AI 结果等）只能靠这个定时器取回；本地引擎接管后按键不再走
+  // RPC，没有它推送帧会一直躺在管道里（用户实报 AI 无反应）。
+  refreshAsyncPollTimer();
   if (localEngine_.active()) {
     Json::Value ret;
   if (localEngine_.filterKeyDown(keyEvent, ret)) {
     ret["success"] = true;
     handleRpcResponse(ret, nullptr, true);
-      return ret["returnValue"].asBool();
+      const bool consumed = ret["returnValue"].asBool();
+      // 2026-11-02：本地引擎"已处理但未消费"的 Ctrl/Alt 组合键继续送 RPC。
+      // AI 等异步能力在外部进程（daemon），DLL 不通这一层它们永远收不到
+      // 热键（用户实报 Ctrl+Shift+E 无反应）。只放行带 Ctrl/Alt 的组合，
+      // 普通字母仍零 RPC。
+      const BYTE *ks = keyEvent.keyStates();
+      const bool hasCtrlOrAlt =
+          ks != nullptr &&
+          (((ks[VK_CONTROL] & 0x80) != 0) || ((ks[VK_MENU] & 0x80) != 0));
+      if (consumed || !hasCtrlOrAlt) {
+        return consumed;
+      }
+      appendRpcGuardLog(L"[filterKeyDown] unconsumed chord -> RPC vk=" +
+                        std::to_wstring(keyEvent.keyCode()));
     }
-    appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
-    return false;
+    else {
+      appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
+      return false;
+    }
   }
   if (isOrdinaryPrintableKey(keyEvent) &&
       !waitForRpcIdleForFirstKey()) {
