@@ -23,6 +23,17 @@ namespace rimeapi {
 
 typedef uintptr_t SessionId;
 
+// RimeGetSchemaList（librime rime_schema_list_t，字段顺序照抄 rime_api.h）
+typedef struct {
+  char* schema_id;
+  char* name;
+  void* reserved;
+} RimeSchemaListItem;
+typedef struct {
+  size_t size;
+  RimeSchemaListItem* list;
+} RimeSchemaList;
+
 typedef struct {
   int data_size;
   const char* shared_data_dir;
@@ -127,6 +138,9 @@ public:
   int (*rimeHighlightCandidateOnCurrentPage)(rimeapi::SessionId, int) = nullptr;
   int (*rimeChangePage)(rimeapi::SessionId, int backward) = nullptr;
   int (*rimeGetCurrentSchema)(rimeapi::SessionId, char*, size_t) = nullptr;
+  int (*rimeGetSchemaList)(rimeapi::RimeSchemaList*) = nullptr;
+  void (*rimeFreeSchemaList)(rimeapi::RimeSchemaList*) = nullptr;
+  int (*rimeSelectSchema)(rimeapi::SessionId, const char*) = nullptr;
   int (*rimeSchemaOpen)(const char*, rimeapi::Config*) = nullptr;
   int (*rimeConfigClose)(rimeapi::Config*) = nullptr;
   int (*rimeConfigSetInt)(rimeapi::Config*, const char*, int) = nullptr;

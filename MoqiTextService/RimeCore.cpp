@@ -436,6 +436,9 @@ bool RimeRuntime::loadLibrary(const wstring& rimeDir) {
   RESOLVE_PROC("RimeSelectCandidateOnCurrentPage",
                rimeSelectCandidateOnCurrentPage);
   RESOLVE_PROC("RimeGetCurrentSchema", rimeGetCurrentSchema);
+  RESOLVE_PROC("RimeGetSchemaList", rimeGetSchemaList);
+  RESOLVE_PROC("RimeFreeSchemaList", rimeFreeSchemaList);
+  RESOLVE_PROC("RimeSelectSchema", rimeSelectSchema);
   // Optional exports: upstream defines these static (api-struct only) in
   // some builds; absence degrades gracefully like Go's procAvailable.
   rimeHighlightCandidateOnCurrentPage =
