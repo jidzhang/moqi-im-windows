@@ -502,6 +502,21 @@ void LocalEngine::buildResponse(const EngineState& state, bool allowCommit,
           const Cand item = cands[i];
           cands.erase(cands.begin() + static_cast<long>(i));
           cands.insert(cands.begin(), item);
+          // 2026-11-02 修复：提顶改了显示顺序，displayPerm 必须同步旋转
+          //（否则空格/数字仍按提顶前的映射选——显示"是嘛"上屏"事吗"，
+          // 用户实报 shima）。buildDisplayPerm 在"同序"时返回空（=恒等
+          // 映射），提顶恰恰打破恒等，必须显式生成旋转后的映射。
+          if (displayPerm_.empty()) {
+            displayPerm_.resize(cands.size());
+            for (size_t k = 0; k < cands.size(); ++k) {
+              displayPerm_[k] = static_cast<int>(k);
+            }
+          }
+          if (i < displayPerm_.size()) {
+            const int picked = displayPerm_[i];
+            displayPerm_.erase(displayPerm_.begin() + static_cast<long>(i));
+            displayPerm_.insert(displayPerm_.begin(), picked);
+          }
           break;
         }
       }
