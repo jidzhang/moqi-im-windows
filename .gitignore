@@ -60,3 +60,4 @@ installer/distdebug.log
 installer/dbg-gramarm/
 "debug.log"  
 "installer/dist/"  
+!vendor/notepad4/notepad2.exe
