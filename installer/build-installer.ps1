@@ -40,8 +40,10 @@ if (-not (Test-Path -LiteralPath $x64Root)) {
 }
 
 $requiredPaths = @(
-    (Join-Path $win32Root 'MoqiLaunch.exe'),
+    # MoqiLaunch.exe 自 2.0.0 退休（引擎在 MoqiDaemon + TSF DLL），不再要求；
+    # 安装后由 [InstallDelete] 清掉旧包残留副本。
     (Join-Path $win32Root 'SetupHelper.exe'),
+    (Join-Path $win32Root 'MoqiDaemon.exe'),
     (Join-Path $win32Root 'MoqiTextService.dll'),
     (Join-Path $win32Root 'backends.json'),
     (Join-Path $win32Root 'x64\MoqiTextService.dll'),

@@ -1,10 +1,16 @@
 #include <windows.h>
 
+#include <ShlObj.h>
 #include <shellapi.h>
+
+#include <Objbase.h>
+#include <msctf.h>
 
 #include <filesystem>
 #include <string>
 #include <vector>
+
+#pragma comment(lib, "ole32.lib")
 
 namespace fs = std::filesystem;
 
@@ -519,7 +525,11 @@ bool DeleteReregisterTask() {
 // framework activates Moqi at logon the launcher pipe is already listening.
 // Best-effort only: failure must not fail the install (the Run key remains the
 // primary autostart path).
-bool ScheduleLauncherAutostartTask(const Options& options, std::wstring* error) {
+//
+// 2026-11-03 退休：MoqiLaunch.exe 已不随包/不启动，这个任务会把已退休的
+// 启动器拉起来抢管道与单实例锁，导致 daemon 退出、32 位应用全瘫（用户
+// 重启电脑后实报）。RunInstall 不再调用它，只保留 Delete 清理存量任务。
+[[maybe_unused]] bool ScheduleLauncherAutostartTask(const Options& options, std::wstring* error) {
   const fs::path launcher_path =
       fs::path(options.app_dir) / L"MoqiLaunch.exe";
   if (!fs::exists(launcher_path)) {
@@ -676,6 +686,35 @@ int ShowFailureAndReturn(const std::wstring& message, const bool silent) {
   return kExitFailure;
 }
 
+void SetDefaultInputMethodOverride();  // 定义在 RunInstall 前
+bool ActivateMoqiProfile();            // 同上
+
+// 诊断日志：%LOCALAPPDATA%\MoqiIM\Log\setuphelper.log（UTF-8 追加）。
+void LogSetupLine(const std::wstring& line) {
+  wchar_t dir[MAX_PATH] = {};
+  if (::SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, dir) != S_OK) {
+    return;
+  }
+  const std::wstring path = std::wstring(dir) + L"\\MoqiIM\\Log";
+  ::CreateDirectoryW(path.c_str(), nullptr);
+  HANDLE f = ::CreateFileW((path + L"\\setuphelper.log").c_str(), FILE_APPEND_DATA,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (f == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  SYSTEMTIME st = {};
+  ::GetLocalTime(&st);
+  wchar_t prefix[64] = {};
+  swprintf_s(prefix, L"[%04d-%02d-%02d %02d:%02d:%02d] ", st.wYear, st.wMonth,
+             st.wDay, st.wHour, st.wMinute, st.wSecond);
+  const std::wstring out = prefix + line + L"\r\n";
+  DWORD written = 0;
+  ::WriteFile(f, out.c_str(), static_cast<DWORD>(out.size() * sizeof(wchar_t)),
+              &written, nullptr);
+  ::CloseHandle(f);
+}
+
 int RunReregister(const Options& options) {
   const fs::path app_dir(options.app_dir);
   const fs::path source32 = app_dir / L"MoqiTextService.dll";
@@ -700,8 +739,91 @@ int RunReregister(const Options& options) {
     return ShowFailureAndReturn(L"Failed to register x64 TSF DLL.",
                                 options.silent);
   }
+  SetDefaultInputMethodOverride(); // 重注册路径同样要把默认输入法钉回墨奇
+  ActivateMoqiProfile();           // 并把会话当前输入法切到墨奇
   DeleteReregisterTask();
   return kExitSuccess;
+}
+
+// DefaultInputOverride 只影响"默认"，装完当前会话的活动 TIP 仍可能被替换
+// DLL 的窗口期顶掉（2026-11-03 实测：写 override 后新开 notepad 出的
+// "你好"是微软拼音的，墨奇引擎日志不存在）。真正把会话切到墨奇要用
+// ITfInputProcessorProfileMgr::ActivateProfile——搜狗等输入法安装收尾的
+// 同款机制。
+bool ActivateMoqiProfile() {
+  const CLSID kClsid = {0x8f204c91, 0x2d7a, 0x4b3e,
+                        {0x9e, 0x1f, 0x6a, 0x5c, 0x0d, 0x8b, 0x2e, 0x7f}};
+  const GUID kProfile = {0x3f6b5a12, 0x8d44, 0x4e71,
+                         {0x9a, 0x2e, 0x6b, 0x4f, 0x9c, 0x1d, 0x2a, 0x30}};
+  HRESULT hr = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const bool uninit = SUCCEEDED(hr);
+  if (!uninit && hr != RPC_E_CHANGED_MODE) {
+    LogSetupLine(L"ActivateProfile: CoInit failed hr=0x" +
+                 std::to_wstring(static_cast<unsigned long>(hr)));
+    return false;
+  }
+  bool ok = false;
+  ITfInputProcessorProfileMgr* mgr = nullptr;
+  HRESULT hrCreate = ::CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                        CLSCTX_INPROC_SERVER,
+                                        IID_ITfInputProcessorProfileMgr,
+                                        (void**)&mgr);
+  if (SUCCEEDED(hrCreate) && mgr != nullptr) {
+    hr = mgr->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, 0x0804, kClsid,
+                              kProfile, nullptr, 0);
+    ok = SUCCEEDED(hr);
+    LogSetupLine(ok ? L"ActivateProfile: OK"
+                    : L"ActivateProfile: failed hr=0x" +
+                          std::to_wstring(static_cast<unsigned long>(hr)));
+    mgr->Release();
+  } else {
+    LogSetupLine(L"ActivateProfile: CoCreate failed hr=0x" +
+                 std::to_wstring(static_cast<unsigned long>(hrCreate)));
+  }
+  if (uninit) {
+    ::CoUninitialize();
+  }
+  return ok;
+}
+
+// 装完把墨奇设为用户默认输入法（DefaultInputOverride）。不设的话，升级/
+// 覆盖安装替换并重注册 TSF DLL 期间，会话的当前输入法会被顶掉，装完新开
+// 的应用（32/64 位同样）里拼音直接上屏，直到用户手动切换输入法
+//（2026-11-03 装机实报 + CUA 复现；写入后新开进程第一键即中文）。
+static const wchar_t* kMoqiInputTip =
+    L"0804:{8F204C91-2D7A-4B3E-9E1F-6A5C0D8B2E7F}"
+    L"{3F6B5A12-8D44-4E71-9A2E-6B4F9C1D2A30}";
+
+void SetDefaultInputMethodOverride() {
+  HKEY key = nullptr;
+  if (::RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Input\\Settings",
+                        0, nullptr, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE,
+                        nullptr, &key, nullptr) == ERROR_SUCCESS) {
+    ::RegSetValueExW(key, L"DefaultInputOverride", 0, REG_SZ,
+                     reinterpret_cast<const BYTE*>(kMoqiInputTip),
+                     static_cast<DWORD>((wcslen(kMoqiInputTip) + 1) *
+                                        sizeof(wchar_t)));
+    ::RegCloseKey(key);
+  }
+}
+
+// 卸载时只清掉指向我们的 override，别动用户设的其它默认输入法。
+void ClearDefaultInputMethodOverrideIfOurs() {
+  HKEY key = nullptr;
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Input\\Settings",
+                      0, KEY_QUERY_VALUE | KEY_SET_VALUE, &key) ==
+      ERROR_SUCCESS) {
+    wchar_t value[128] = {};
+    DWORD size = sizeof(value);
+    DWORD type = 0;
+    if (::RegQueryValueExW(key, L"DefaultInputOverride", nullptr, &type,
+                           reinterpret_cast<BYTE*>(value), &size) ==
+            ERROR_SUCCESS &&
+        type == REG_SZ && _wcsicmp(value, kMoqiInputTip) == 0) {
+      ::RegDeleteValueW(key, L"DefaultInputOverride");
+    }
+    ::RegCloseKey(key);
+  }
 }
 
 int RunInstall(const Options& options) {
@@ -727,6 +849,11 @@ int RunInstall(const Options& options) {
   }
 
   DeleteReregisterTask();
+  // 旧版（1.x）创建的 MoqiLaunch 自启任务必须在两条分支（含 reboot 分支）
+  // 之前删掉：它会在重启后拉起已退休的 MoqiLaunch.exe，抢走管道与单实例锁，
+  // 导致 daemon 启动即退（2026-11-03 用户重启后三连炸的根因）。此前只在
+  // 非 reboot 分支末尾调用，最常见的覆盖装路径恰好漏掉。
+  DeleteLauncherAutostartTask();
   // During an in-place reinstall/upgrade, unregistering first removes the TIP
   // from the user's language profile list. Re-registering the DLL does not
   // always restore that list entry reliably, so keep the existing registration
@@ -768,9 +895,26 @@ int RunInstall(const Options& options) {
   }
 
   if (reboot_required) {
+    // DLL 被占用时走的是"改名旧文件 + 新文件落位"路径：正式路径上已经是
+    // 新 DLL，注册与激活不必等重启——此前这里提前返回，导致覆盖安装后
+    // 输入法没被注册/激活，新开应用拼音直落英文（2026-11-03 装机实报；
+    // 全新机器首装不走此路径所以没暴露）。重启只影响残留旧文件的清理。
+    if (!RunRegsvr(regsvr32, dest32, app_dir, false)) {
+      return ShowFailureAndReturn(L"Failed to register Win32 TSF DLL.",
+                                  options.silent);
+    }
+    if (!RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
+      return ShowFailureAndReturn(L"Failed to register x64 TSF DLL.",
+                                  options.silent);
+    }
+    SetDefaultInputMethodOverride();
+    ActivateMoqiProfile();
     std::wstring schedule_error;
     if (!ScheduleReregisterTask(options, schedule_error)) {
-      return ShowFailureAndReturn(schedule_error, options.silent);
+      // 补注册任务是 best-effort：即使组策略禁用计划任务，文件/注册/激活
+      // 都已完成，不能把整包装判失败（用户会重装反而破坏可用状态）。
+      OutputDebugStringW((L"[MoqiSetupHelper] schedule re-register failed: " +
+                          schedule_error + L"\n").c_str());
     }
     return kExitRestartRequired;
   }
@@ -783,9 +927,13 @@ int RunInstall(const Options& options) {
     return ShowFailureAndReturn(L"Failed to register x64 TSF DLL.",
                                 options.silent);
   }
-  // Backup autostart for the launcher (the HKCU Run key remains primary).
-  std::wstring autostart_error;
-  ScheduleLauncherAutostartTask(options, &autostart_error);
+  // 装完即墨奇为默认输入法：否则新开应用拼音直落英文（见函数注释）。
+  SetDefaultInputMethodOverride();
+  ActivateMoqiProfile(); // 并把会话当前输入法切到墨奇（override 不够）
+  // 2026-11-03：不再创建"启动器备份自启任务"——MoqiLaunch 已退休，该任务
+  // 会在每次开机把 MoqiLaunch.exe 拉起来抢走管道与单实例锁，MoqiDaemon
+  // --serve 直接退出，32 位应用全瘫（用户重启后实报：叉子图标+拼音直落）。
+  // 自启唯一入口 = HKCU Run 的 MoqiDaemon --serve。删除已在函数开头做。
   return kExitSuccess;
 }
 
@@ -802,6 +950,7 @@ int RunUninstall(const Options& options) {
   DeleteLauncherAutostartTask();
   RunRegsvr(regsvr32, dest32, app_dir, true);
   RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, true);
+  ClearDefaultInputMethodOverrideIfOurs();
 
   bool reboot_required = false;
   if (!DeleteFileWithFallback(dest32, reboot_required)) {
@@ -812,7 +961,11 @@ int RunUninstall(const Options& options) {
     return ShowFailureAndReturn(
         L"Failed to remove x64 TSF DLL from " + dest64.wstring(), options.silent);
   }
-  return reboot_required ? kExitRestartRequired : kExitSuccess;
+  // DLL 被运行中应用占用时走改名删除（MoveFileEx 重启后清），对用户无感。
+  // 绝不因此返回 kExitRestartRequired：Inno 6.3+ 升级时会先自动跑旧卸载器，
+  // 旧卸载器一报"需重启"，新安装器直接退出码 5、什么都不装（2026-11-03
+  // 覆盖安装实测）。残留清理交给重启后的 MoveFileEx 即可。
+  return kExitSuccess;
 }
 
 void ShowUsage() {

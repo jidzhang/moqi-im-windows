@@ -97,8 +97,22 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 
 [InstallDelete]
 Type: files; Name: "{app}\MoqiLauncher.exe"
-Type: filesandordirs; Name: "{app}\moqi-ime"
+; MoqiLaunch.exe 自 2.0.0 退休（引擎在 MoqiDaemon + TSF DLL），旧包装下的
+; 副本必须清掉：它被旧版计划任务拉起时会抢管道/单实例锁，让 daemon 退出，
+; 32 位应用全瘫（2026-11-03 用户重启后实报）。
+Type: files; Name: "{app}\MoqiLaunch.exe"
+; 随包编辑器目录：2.0.0 早期包名为 Notepad4，现统一为 Notepad2（exe 改名
+; notepad2.exe）；旧目录整体清掉避免两份共存。
+Type: filesandordirs; Name: "{app}\Notepad4"
+Type: filesandordirs; Name: "{app}\Notepad2"
 Type: filesandordirs; Name: "{app}\x64"
+; 不再整树删除 {app}\moqi-ime：那会在每次升级重写 110-400MB 预编译数据，
+; 并把用户放进安装目录的 .gram 一起删掉。本版真正下线的旧文件逐项删除，
+; 其余由 [Files] 的 ignoreversion 覆盖。
+Type: files; Name: "{app}\MoqiIME.exe"
+Type: files; Name: "{app}\moqi-ime\MoqiIME.exe"
+Type: files; Name: "{app}\moqi-ime\input_methods\rime\data\zh-moqi.gram"
+Type: files; Name: "{app}\mdaemon.*"
 
 [Code]
 const
@@ -308,19 +322,19 @@ begin
     // 装完直接拉起启动器（2026-10-24 定案）。不能走 [Run]+Check：
     // 静默模式下 Inno 先评估 [Run] 的 Check、后触发 ssPostInstall，
     // Check 读到的标志永远还是初始 False（实测 /LOG 时序，14-交接 §十四）。
-    // 需重启场景不拉起（重启后登录任务/Run 键会拉）。
-    if HelperInstallSucceeded and (not HelperInstallNeedsRestart) then
+    // 2026-11-03：DLL 被占用走改名路径时也拉起——SetupHelper 在该路径同样
+    // 完成注册+激活（见 SetupHelper RunInstall），不拉起只会让 x86 应用
+    // 首键多等守护复活（实测覆盖安装后 daemon 缺席）。
+    if HelperInstallSucceeded then
     begin
       if not Exec(ExpandConstant('{app}\MoqiDaemon.exe'), '--serve',
                   ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ResultCode) then
-        Log('Launch MoqiLauncher failed, code ' + IntToStr(ResultCode))
+        Log('Launch MoqiDaemon failed, code ' + IntToStr(ResultCode))
       else
-        Log('Launched MoqiLauncher after install');
+        Log('Launched MoqiDaemon after install');
     end
     else
-      Log('Skip launching MoqiLauncher: succeeded=' +
-        IntToStr(Ord(HelperInstallSucceeded)) + ' needsRestart=' +
-        IntToStr(Ord(HelperInstallNeedsRestart)));
+      Log('Skip launching MoqiDaemon: install failed');
   end;
 end;
 
@@ -336,9 +350,23 @@ begin
   end;
 end;
 
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  // 必须早于 Inno 6.3+ 自动调用的旧版卸载器：旧 SetupHelper /u 在系统 TSF
+  // DLL 被记事本等应用占用时会返回"需重启"，新安装器随即退出码 5、一个
+  // 文件都不装（2026-11-03 覆盖装实报）。这里先把被占用的 DLL 改名让出
+  // 正式路径，旧卸载器就能正常走完；kill daemon 也避免它锁 rime.dll。
+  StopMoqiProcesses;
+  FreeLockedFile(ExpandConstant('{sys}\MoqiTextService.dll'));
+  FreeLockedFile(ExpandConstant('{syswow64}\MoqiTextService.dll'));
+  Result := '';
+end;
+
 function NeedRestart(): Boolean;
 begin
-  Result := HelperInstallNeedsRestart;
+  // 极静默安装时 Inno 会不问直接重启（丢用户未保存工作）。交互安装仍
+  // 在完成页提示；静默安装把重启交给调用方 /NORESTART 决定。
+  Result := HelperInstallNeedsRestart and not WizardSilent();
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -349,6 +377,11 @@ begin
   begin
     StopMoqiProcesses;
     DeleteLegacyAutorunValue;
+    // 2026-11-03：卸载（含 Inno 6.3+ 升级时自动跑的旧卸载器）前先把可能被
+    // 运行中进程占用的 rime.dll 改名让路——否则 Inno 自己删不掉会标记
+    // "需重启"，新安装器直接退出码 5 什么都不装（覆盖安装实测）。
+    FreeLockedFile(ExpandConstant('{app}\moqi-ime\input_methods\rime\rime.dll'));
+    FreeLockedFile(ExpandConstant('{app}\rime.dll'));
     if not RunSetupHelper(BuildUninstallSetupHelperParameters('/u'), ResultCode) then
       HandleSetupHelperResult('SetupHelper uninstall', ResultCode);
     if ResultCode = SetupHelperExitRestartRequired then

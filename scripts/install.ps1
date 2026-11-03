@@ -119,11 +119,10 @@ function Copy-MoqiImeRuntime {
         [string] $DestinationRoot
     )
 
-    $serverExe = Join-Path $SourceRoot "MoqiIME.exe"
-    if (-not (Test-Path -LiteralPath $serverExe)) {
-        throw "moqi-ime MoqiIME.exe not found: $serverExe"
-    }
-
+    # 2026-11-03 Go retirement: the engine lives in MoqiDaemon (x86) and in the
+    # x64 TSF DLL in-process. MoqiIME.exe is no longer shipped or started.
+    # Everything else (input_methods/rime data, rime.dll, prebuilt dictionaries)
+    # stays required.
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
 
     $directories = Get-ChildItem -Path $SourceRoot -Recurse -Force -Directory |
@@ -135,7 +134,9 @@ function Copy-MoqiImeRuntime {
     }
 
     $files = Get-ChildItem -Path $SourceRoot -Recurse -Force -File | Where-Object {
-        $_.Extension -ne ".go" -and $_.FullName -notmatch '[\\/]\.git(?:[\\/]|$)'
+        $_.Extension -ne ".go" -and
+        $_.Name -ne "MoqiIME.exe" -and
+        $_.FullName -notmatch '[\\/]\.git(?:[\\/]|$)'
     }
     foreach ($file in $files) {
         $relativePath = $file.FullName.Substring($SourceRoot.Length).TrimStart('\', '/')
@@ -145,6 +146,13 @@ function Copy-MoqiImeRuntime {
             New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         }
         Copy-Item -LiteralPath $file.FullName -Destination $targetPath -Force
+    }
+
+    # A stale stage tree may still contain the old Go backend; remove it so an
+    # upgrade install never ships the retired MoqiIME.exe.
+    $staleServer = Join-Path $DestinationRoot "MoqiIME.exe"
+    if (Test-Path -LiteralPath $staleServer) {
+        Remove-Item -LiteralPath $staleServer -Force
     }
 }
 
@@ -176,12 +184,8 @@ if (-not (Test-Path -LiteralPath $backends)) {
 }
 Copy-Item -LiteralPath $backends -Destination (Join-Path $stageWin32Root "backends.json") -Force
 
-$launcher = Resolve-ArtifactPath -Label "MoqiLaunch.exe" -Candidates @(
-    (Join-Path $Win32BuildDir "MoqiLaunch.exe"),
-    (Join-Path $Win32BuildDir "Release\MoqiLaunch.exe"),
-    (Join-Path $Win32BuildDir "MoqLauncher\Release\MoqiLaunch.exe")
-)
-Copy-IfExists -Source $launcher -Destination (Join-Path $stageWin32Root "MoqiLaunch.exe")
+# 2026-11-03 已退休：MoqiLaunch.exe 不再入包（引擎在 MoqiDaemon 与 TSF DLL，
+# 启动器只会抢管道/单实例锁）。旧包遗留副本由 .iss [InstallDelete] 清掉。
 
 $setupHelper = Resolve-ArtifactPath -Label "SetupHelper.exe" -Candidates @(
     (Join-Path $Win32BuildDir "SetupHelper.exe"),
@@ -204,6 +208,18 @@ $rimex86 = Resolve-ArtifactPath -Label "x86 rime.dll (daemon)" -Candidates @(
     (Join-Path $RepoRoot "..\librime\build-x86\bin\Release\rime.dll")
 )
 Copy-Item -LiteralPath $rimex86 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
+
+# Bundled text editor (Notepad4 zh-Hans Win32, BSD-3; shipped as notepad2.exe
+# per user decision 2026-11-03). Menu items that open config files use it.
+$notepad4Dir = Join-Path $RepoRoot "vendor\notepad4"
+$notepad4Exe = Join-Path $notepad4Dir "notepad2.exe"
+if (-not (Test-Path -LiteralPath $notepad4Exe)) {
+    throw "vendor\notepad4\notepad2.exe not found (see vendor\notepad4\README.md)"
+}
+$notepad4Dest = Join-Path $stageWin32Root "Notepad2"
+New-Item -ItemType Directory -Path $notepad4Dest -Force | Out-Null
+Copy-Item -LiteralPath $notepad4Exe -Destination $notepad4Dest -Force
+Copy-Item -LiteralPath (Join-Path $notepad4Dir "License.txt") -Destination $notepad4Dest -Force
 
 $dll32 = Resolve-ArtifactPath -Label "Win32 MoqiTextService.dll" -Candidates @(
     (Join-Path $Win32BuildDir "MoqiTextService.dll"),
