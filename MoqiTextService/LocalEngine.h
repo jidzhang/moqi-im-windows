@@ -58,12 +58,56 @@ public:
   void onCompositionTerminated(bool forced);
   // 引擎状态命令本地执行（ascii_mode/full_shape），响应带图标刷新。
   bool toggleOption(const char* name, Json::Value& resp);
+  // 菜单"总候选数"变更的即时跟随（daemon ON_COMMAND 响应带
+  // customizeUi.candidateCount）。
+  void applyCandidateCount(int count);
+  void setSemicolonSelectSecond(bool enabled) {
+    semicolonSelectSecond_ = enabled;
+  }
+
+  // ---- AI 覆盖层（等价 Go fillAIResponse：只叠加第一条，原候选顺延）----
+  // 外部进程（daemon）异步生成后经推送帧下发；DLL 只保管显示状态与选字
+  // 映射，网络与模型调用仍全在外部进程。
+  void setAiOverlay(const std::string& candidate);
+  void clearAiOverlay();
+  bool aiOverlayActive() const { return !aiOverlay_.empty(); }
+  // 只按当前引擎状态重绘一次响应（不处理按键）——AI 覆盖层变化后刷新
+  // 候选窗用。
+  bool redraw(Json::Value& resp);
+  // 导出当前组字与前几条候选（只读，不弹 commit）。AI 热键转发给 daemon
+  // 时随请求携带：daemon 的 rime session 独立于本进程，看不到这里的组字。
+  void getCompositionState(Json::Value& state);
+  // 激活跟随：TSF onActivate 时重读共享输入状态/方案并套用（跨应用传播点，
+  // 文件走 mtime 缓存，未启用时近零成本）。
+  void refreshSyncedSettings();
+  // 自上次导出后是否有提交（=userdb 有新学习）。Client 失焦时据此决定
+  // 是否后台导出快照；导出成功后清零。
+  bool consumeUserDictDirty() {
+    bool d = userDictDirty_;
+    userDictDirty_ = false;
+    return d;
+  }
+  bool hasUserDictChanges() const { return userDictDirty_; }
+  // 当前是否有组字（导出前的安全检查：RimeSyncUserData 会清所有会话）。
+  bool hasComposition();
+  // 导出学习快照并**原子重建会话**：RimeSyncUserData 内部 CleanupAllSessions
+  // 会销毁全部会话（sessions_.clear()，2026-11-02 实证第二回合按键直通），
+  // 必须在同一 runtime 锁内废句柄→导出→重建（ensureSession 重放共享态/方案），
+  // 等锁的按键拿到手时已是好会话。返回是否有快照拷入主词典。
+  // 会话不存在也能导（导出是进程级 userdb 操作）：反激活后仍可兜底导出。
+  bool syncUserDbNow();
+  // 反激活兜底导出是否可行（运行时已就绪且有本进程用户目录）。
+  bool canExportUserDb();
 
 private:
+  // 跨进程学习导入：主词典 sync 有新快照时合并进本进程 userdb（会重建会话）。
+  void maybeImportMasterLearning();
+
   struct EngineState {
     bool ok = false;
     std::string commit;
     std::string composition;
+    int pageNo = 0;
     int cursorPos = 0;
     int selStart = 0;
     int selEnd = 0;
@@ -115,6 +159,14 @@ private:
   std::string rawInputTracked_;
   std::string rawInputAtCommit_;
   std::vector<int> displayPerm_; // display index -> engine index; empty = identity
+  std::vector<std::string> aiOverlay_;
+  int overlayCustomCount_ = 0;
+  std::vector<std::string> overlayCustomTexts_;
+  std::string overlaySuperText_;
+  std::string overlayCommitText_;
+  int overlayConsumeKeyUpCode_ = 0; // AI 覆盖：最多 1 条（Go 语义）
+  std::string pendingAiCommit_;        // 待上屏的 AI 文本（下次响应带出）
+  bool userDictDirty_ = false;         // 有提交待导出学习快照
 };
 
 } // namespace Moqi

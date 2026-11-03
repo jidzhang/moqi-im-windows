@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -108,14 +109,26 @@ public:
   // dllDir：rime.dll 的查找目录，缺省 = rimeDir（programDir\backendDir\
   // input_methods\rime）。x86 MoqiDaemon 传自己的目录——同一安装里
   // moqi-ime\...\rime.dll 是 x64（Go 后端/x64 TSF DLL 用），x86 版放安装根。
+  // masterUserDir（2026-11-02 学习闭环）：非空 = daemon 主词典模式（独占
+  // 目录、userdb 开启、汇入各进程学习快照）；空 = DLL 每进程 p-<hex> 模式。
   void requestInit(const std::wstring& programDir,
                    const std::wstring& backendDir,
-                   const std::wstring& dllDir = L"");
+                   const std::wstring& dllDir = L"",
+                   const std::wstring& masterUserDir = L"");
 
   bool ready() const { return state_ == State::Ready; }
   bool failed() const { return state_ == State::Failed; }
 
-  std::mutex& mutex() { return apiMutex_; }
+  // 首键等待引擎就绪（首次部署/冷启动期间按键不能直落英文）。
+  // 返回 true = 已就绪；false = 超时或初始化失败。
+  bool waitUntilReady(int timeoutMs);
+
+  // 本进程的进程内引擎用户目录（requestInit 时确定；p-<hex> 每进程唯一）。
+  const std::wstring& inprocUserDir() const { return inprocUserDir_; }
+
+  // rime.dll 非线程安全但同线程可重入（librime 内部无 TLS 假设）；输入
+  // 状态共享等组合路径会嵌套加锁，故用递归锁（2026-11-02）。
+  std::recursive_mutex& mutex() { return apiMutex_; }
 
   // Flat API procs; all guaranteed non-null once ready() (the two optional
   // exports stay null when the dll does not provide them).
@@ -123,6 +136,10 @@ public:
   void (*rimeInitialize)(rimeapi::Traits*) = nullptr;
   int (*rimeStartMaintenance)(int fullCheck) = nullptr;
   void (*rimeJoinMaintenanceThread)() = nullptr;
+  // 同步用户词典（导出快照到 sync/<installation>/ 并合并 sync/*/ 的外来
+  // 快照；见 user_dict_manager.cc Synchronize）。调用会 CleanupAllSessions，
+  // 只能在无组字的空闲窗口调用并 join 等完成。
+  int (*rimeSyncUserData)() = nullptr;
   rimeapi::SessionId (*rimeCreateSession)() = nullptr;
   int (*rimeFindSession)(rimeapi::SessionId) = nullptr;
   void (*rimeDestroySession)(rimeapi::SessionId) = nullptr;
@@ -157,7 +174,8 @@ private:
   enum class State { Idle, Loading, Ready, Failed };
   std::mutex stateMutex_; // guards state_ transitions + init thread spawn
   State state_ = State::Idle;
-  std::mutex apiMutex_; // serializes all rime API calls in this process
+  std::wstring inprocUserDir_; // requestInit 填充（p-<hex>）
+  std::recursive_mutex apiMutex_; // serializes all rime API calls in this process
   HMODULE module_ = nullptr;
   std::wstring iconDir_;
   std::string sharedDataDirUtf8_;
@@ -182,7 +200,24 @@ std::string readFileUtf8(const std::wstring& path);
 void writeFileUtf8(const std::wstring& path, const std::string& content);
 // In-proc rime_frost.custom.yaml: backend patch lines verbatim (engine
 // behavior parity). 阶段3注：用户词典开启（多进程共享实证，见 24-交接）。
-std::string buildInProcCustomPatch(const std::wstring& backendUserDir);
+std::string buildInProcCustomPatch(const std::wstring& backendUserDir,
+                                   const std::wstring& sharedDataDir = L"");
+
+// --------------------------------------------------- 置顶短语/超级简拼 ----
+// Go custom_phrase.go / super_abbrev.go 的轻量等价物：文件解析、前缀匹配、
+// 排序与 super abbrev 查表。引擎层负责把结果前置到候选列表、按键选择。
+struct OverlayCandidate {
+  std::string text;
+  std::string comment;
+};
+struct InputOverlay {
+  std::vector<OverlayCandidate> custom;  // 置顶短语（已按 Go 规则排序去重）
+  std::string superText;                 // 超级简拼映射文本（空=无）
+};
+// pageNo > 0 时 Go 会清掉置顶短语 overlay；rawInput 为空时回退 composition。
+InputOverlay computeInputOverlay(const std::string& rawInput,
+                                 const std::string& composition, int pageNo,
+                                 int limit);
 
 constexpr int kVoidSymbol = 0xFFFFFF;
 constexpr int kRimeBackSpace = 0xFF08;
@@ -291,6 +326,52 @@ bool isBareShiftKeyCode(UINT keyCode);
 bool isKeyReleaseRelevantForBackend(UINT keyCode);
 // UTF-8 byte position -> code point index (compositionCaretRuneIndex).
 int compositionCaretRuneIndex(const std::string& composition, int caretBytePos);
+
+// ---------------------------------------------- 输入状态共享（跨进程） --
+// Go rime.go 的 shared input state 移植：ascii_mode / traditionalization /
+// ascii_punct / full_shape 四个输入状态选项在应用间共享，落盘
+// %APPDATA%\Moqi\appearance_config.json（input_state_shared + shared_options），
+// 会话创建时套用、Shift 抬起 / Caps 按下 / 菜单开关后捕获变化回写。
+// daemon 会话（32 位）与 DLL 进程内会话（64 位）共用本模块——文件即跨
+// 进程通道（Go 同款：激活时重新读取，切换应用即跟随）。
+struct SharedInputState {
+  bool enabled = false;
+  std::map<std::string, bool> options;  // 仅上述四键
+};
+
+// 读文件（带 mtime 缓存，热路径零重复 IO）。
+SharedInputState loadSharedInputStateCached();
+// 读改写：只动 input_state_shared / shared_options 两键，其余键原样保留。
+void saveSharedInputState(const SharedInputState& s);
+
+// 会话建立/激活后：把共享值压进 rime 会话（未启用或无值时为空操作）。
+void applySharedInputState(rimeapi::SessionId id);
+// Shift 抬起 / Caps 按下的捕获触发点（Go shouldSyncSharedInputStateAfterProcessKey
+// 同款判定在内部做）。共享开启且有变化时回写文件。
+void syncSharedAfterKey(rimeapi::SessionId id, UINT vkCode, bool isUp);
+// 菜单/按钮开关了共享四选项后的捕获（不看键型，直接读会话比对）。
+void syncSharedAfterOptionToggle(rimeapi::SessionId id);
+// 菜单把共享打开：无视文件里的旧 enabled 值，从会话取基线并连同
+// enabled=true 落盘（Go toggleInputStateShared 的开启分支）。
+void enableSharedFromSession(rimeapi::SessionId id);
+
+// 方案跟随：current_schema_id 的读/写（RMW 只动一键）。daemon 侧切换方案时
+// 落盘，进程内引擎在激活时据此 SelectSchema。
+std::string loadSyncedSchemaId();
+void saveSyncedSchemaId(const std::string& schemaId);
+
+// ---------------------------------------------- 用户词典学习（跨进程） --
+// 每进程 userdb 独占（RimeInProc\p-*），学习经 rime 原生 sync 快照汇入主
+// 词典。DLL 在失焦/会话空闲时调用：导出本进程快照并拷到主词典 sync/
+// 目录，返回拷贝的文件数（0=无学习或导出失败）。内部持 runtime 互斥并
+// join 维护线程——只在无组字窗口调用（会话已销毁的 deactivate 时刻）。
+// daemon 收到通知后对主词典执行 RimeSyncUserData 完成合并。
+int syncInprocUserDbToMaster();
+
+// 反向：把主词典 sync/ 下其它进程的快照灌进本进程用户目录并合并
+//（RimeSyncUserData）。用于"另一个应用刚学会的词，本应用也要认识"。
+// 会清掉全部会话：调用方须保证无组字并在返回后重建会话。
+bool importMasterUserDbSnapshots();
 
 } // namespace Moqi
 
