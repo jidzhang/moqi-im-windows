@@ -39,6 +39,9 @@ class TextService: public Ime::TextService {
 public:
 	TextService(ImeModule* module);
 
+	// 候选窗消息泵需要触发异步轮询（WM_TIMER → pollAsyncForUi）。
+	Client* client() const { return client_.get(); }
+
 	virtual void onActivate();
 	virtual void onDeactivate();
 

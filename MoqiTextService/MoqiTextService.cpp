@@ -46,6 +46,9 @@ std::wstring processBaseName(const std::wstring& imagePath);
 std::wstring timestampNow();
 std::wstring formatDebugLogLine(const std::wstring& message);
 constexpr wchar_t kDefaultCommentFontFace[] = L"Consolas";
+// 候选默认字体：必须是中文字形齐全的字体。Segoe UI 无 CJK 字形，GDI 回退
+// 会落到宋体（2026-11-03 用户重启后实报"候选字都是宋体"）。
+constexpr wchar_t kDefaultCandFontFace[] = L"Microsoft YaHei UI";
 constexpr ULONGLONG kCandidateWindowMoveThrottleMs = 50;
 
 bool callClientFilterKeyDown(Client* client, Ime::KeyEvent& keyEvent, bool& sehCaught) {
@@ -538,6 +541,11 @@ void TextService::onKillThreadFocus() {
 		<< L" pending_candidate_recovery=" << boolText(pendingCandidateRecovery_)
 		<< L" " << foregroundWindowSummary();
 	logDebug(log.str());
+	// 用户词典学习（2026-11-02）：切走焦点=导出学习快照的安全时机之一
+	//（内部查无组字才动手 + 20s 防抖）。
+	if (client_ != nullptr) {
+		client_->scheduleUserDbExport(/*checkComposition=*/true);
+	}
 	// 切走应用（焦点线程变了，含切到其他程序）：候选窗是无激活弹出窗，
 	// 不隐藏就会浮在其他应用之上（用户 2026-10-20 实报"候选窗浮到最前面"）。
 	// 组字状态不动，回到本应用继续打字时后端状态会重新显示候选。
@@ -985,7 +993,7 @@ void TextService::updateCandidates(Ime::EditSession* session) {
 				swprintf_s(buf, L"%04X ", static_cast<unsigned int>(selKeys_[k]));
 				keysDump += buf;
 			}
-			appendRpcGuardLog(L"[selKeysState] size=" +
+			appendRpcTraceLog(L"[selKeysState] size=" +
 			                  std::to_wstring(selKeys_.size()) + L" [" +
 			                  keysDump + L"]");
 		}
@@ -1492,9 +1500,9 @@ void TextService::applyCandidateAppearanceNow() {
 
 	lf.lfHeight = candFontHeight(candidateWindow_ ? candidateWindow_->hwnd() : nullptr);
 	lf.lfWeight = FW_NORMAL;
-	if (!candFontName_.empty()) {
-		wcsncpy_s(lf.lfFaceName, _countof(lf.lfFaceName), candFontName_.c_str(), _TRUNCATE);
-	}
+	const std::wstring& candFontName =
+	    candFontName_.empty() ? std::wstring(kDefaultCandFontFace) : candFontName_;
+	wcsncpy_s(lf.lfFaceName, _countof(lf.lfFaceName), candFontName.c_str(), _TRUNCATE);
 	font_ = CreateFontIndirect(&lf);
 
 	lf.lfHeight = candCommentFontHeight(candidateWindow_ ? candidateWindow_->hwnd() : nullptr);

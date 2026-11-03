@@ -9,6 +9,10 @@ namespace Moqi {
 // 实现 见 MoqiClient.cpp：落在 %LOCALAPPDATA%\MoqiIM\Log\tsf-key-guard.log。
 void appendRpcGuardLog(const std::wstring &message);
 
+// 高频/含用户内容的诊断（按键状态、AI 文本、轮询细节）：默认不写，
+// 只有 MoqiLaunch(er).json 里 logLevel=debug/trace 时才落盘。
+void appendRpcTraceLog(const std::wstring &message);
+
 } // namespace Moqi
 
 #endif // _Moqi_KEY_GUARD_LOG_H_

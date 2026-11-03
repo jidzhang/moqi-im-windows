@@ -24,6 +24,7 @@
 #include "libIME2/src/DebugLogConfig.h"
 #include "../proto/ProtoFraming.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <json/json.h>
@@ -127,6 +128,13 @@ void appendRpcGuardLog(const std::wstring &message) {
     return;
   }
   stream << L"[" << timestamp << "] " << message << L"\n";
+}
+
+void appendRpcTraceLog(const std::wstring &message) {
+  if (!Ime::isDebugLoggingEnabled()) {
+    return;
+  }
+  appendRpcGuardLog(message);
 }
 
 // 其余文件内辅助函数回到匿名命名空间（内部链接），只有上面的按键异常日志
@@ -399,6 +407,8 @@ void Client::updateUI(const Json::Value &data) {
       textService_->setInlinePreedit(value.asBool());
     } else if (value.isBool() && strcmp(name, "autoPairQuotes") == 0) {
       textService_->setAutoPairQuotes(value.asBool());
+    } else if (value.isBool() && strcmp(name, "semicolonSelectSecond") == 0) {
+      localEngine_.setSemicolonSelectSecond(value.asBool());
     } else if (value.isArray() && strcmp(name, "autoPairRules") == 0) {
       std::vector<AutoPairRuleState> rules;
       rules.reserve(value.size());
@@ -461,7 +471,7 @@ void Client::updateSelectionKeys(Json::Value &msg) {
     // 2026-11-01：EmitUnpopulated 后空串出现在每个响应里，空串不是"清空
     // 序号"指令（旧协议省略零值），只在非空时更新，否则候选序号标签消失。
     if (!selKeys.empty()) {
-      appendRpcGuardLog(L"[setSelKeys] len=" + std::to_wstring(selKeys.size()) +
+      appendRpcTraceLog(L"[setSelKeys] len=" + std::to_wstring(selKeys.size()) +
                         L" first=U+" +
                         std::to_wstring(static_cast<unsigned int>(selKeys[0])));
       textService_->setSelKeys(selKeys);
@@ -740,6 +750,13 @@ void Client::updateKeyboardStatus(Json::Value &msg) {
 
 void Client::updateStatus(Json::Value &msg, Ime::EditSession *session,
                           bool applyEngineState) {
+  // 云剪贴板退出标志（cloudClip:false）在同步回复里（commit/Esc/删除），
+  // 此前只有 applyAsyncResponse 处理，导致进入转发模式后永远退不回来。
+  if (msg.isMember("cloudClip")) {
+    cloudClipRpcMode_ = msg["cloudClip"].asBool();
+    appendRpcGuardLog(L"[cloudclip] rpc mode " +
+                      std::wstring(cloudClipRpcMode_ ? L"ON" : L"OFF"));
+  }
   // 2026-11-02 审计结论：protojson EmitUnpopulated 让隐式零值字段出现在每条
   // 响应里（compositionString:""/candidateList:[]/showCandidates:false…）。
   // 只有按键类方法（filterKeyDown/onKeyDown/onKeyUp/filterKeyUp/onPreservedKey
@@ -880,9 +897,17 @@ void Client::updateCandidateList(Json::Value &msg, Ime::EditSession *session) {
 // MOQI_LOCAL_ENGINE=0.
 void Client::requestLocalEngineInit(TextService *service) {
   RimeRuntime &runtime = RimeRuntime::instance();
-  if (!runtime.supported() || runtime.ready() || runtime.failed()) {
+  if (!runtime.supported() || runtime.ready()) {
     return;
   }
+  // Failed 可重试（requestInit 内部复位 Failed→Idle）；5 秒退避。
+  static std::atomic<ULONGLONG> lastAttempt{0};
+  const ULONGLONG now = ::GetTickCount64();
+  const ULONGLONG prev = lastAttempt.load();
+  if (runtime.failed() && now - prev < 5000) {
+    return;
+  }
+  lastAttempt.store(now);
   auto module =
       static_cast<Moqi::ImeModule *>(service->imeModule().operator->());
   if (module == nullptr || module->programDir().empty() ||
@@ -935,15 +960,66 @@ void Client::onActivate() {
   }
   // 阶段1：激活即后台初始化进程内引擎，首个空闲按键点完成接管。
   requestLocalEngineInit(textService_);
+  // 输入状态共享/方案跟随（Go：各实例激活时读文件重放）。本地引擎已接管
+  // 的进程在此重读，切换应用即跟随其他应用的共享状态。
+  if (localEngine_.active()) {
+    localEngine_.refreshSyncedSettings();
+  }
 }
 
 void Client::onDeactivate() {
   // Fire-and-forget: never block the app's TSF thread waiting for a reply to
   // a notification (e.g. when the backend is hung at boot).
   sendRpcNoWait("onDeactivate");
+  const bool userDictDirty =
+      localEngine_.active() && localEngine_.consumeUserDictDirty();
   localEngine_.deactivate();
   LangBarButton::clearIconCache();
   isActivated_ = false;
+  if (userDictDirty) {
+    // 真反激活：会话已销毁=安全窗口，后台导出学习快照（无组字可查）。
+    // force：进程可能马上退出，必须跳过 20 秒防抖（否则最后一次学习丢失）。
+    scheduleUserDbExport(/*checkComposition=*/false, /*requireDirty=*/false,
+                         /*force=*/true);
+  }
+}
+
+// 用户词典学习闭环（2026-11-02）：后台线程导出（维护任务 ~百毫秒级，绝不
+// 在 TSF 线程做）。checkComposition=true 时先查无组字再导（RimeSyncUserData
+// 会清会话组字）。20 秒防抖 + 在途互斥；有学习才动作。
+void Client::scheduleUserDbExport(bool checkComposition, bool requireDirty,
+                                  bool force) {
+  // 反激活后 active() 已为 false（会话销毁），但导出是进程级 userdb 操作，
+  // 仍可执行——这正是进程退出前最后一次导出的路径。非 force 的常规路径
+  // 仍要求引擎已接管。
+  if (!force && !localEngine_.active()) {
+    return;
+  }
+  if (force && !localEngine_.canExportUserDb()) {
+    return;
+  }
+  if (requireDirty && !localEngine_.hasUserDictChanges()) {
+    return;
+  }
+  const ULONGLONG now = ::GetTickCount64();
+  if (!force && now - lastUserDbExportTick_ < 20000) {
+    return;
+  }
+  if (userDbExportInFlight_.exchange(true)) {
+    return;
+  }
+  lastUserDbExportTick_ = now;
+  std::thread([this, checkComposition]() {
+    bool exported = false;
+    if (!checkComposition || !localEngine_.hasComposition()) {
+      // 导出+原子重建会话（RimeSyncUserData 会销毁全部会话，见实现注释）。
+      exported = localEngine_.syncUserDbNow();
+    }
+    userDbExportInFlight_.store(false);
+    if (exported) {
+      sendRpcNoWaitReliable("userdbChanged");
+    }
+  }).detach();
 }
 
 bool Client::waitForRpcIdleForFirstKey() const {
@@ -974,35 +1050,60 @@ bool Client::waitForRpcIdleForFirstKey() const {
 
 bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   // 阶段1：进程内引擎优先；接管点要求无组字/无候选/无在途异步响应。
-  maybeEngageLocalEngine();
-  // 2026-11-02：异步轮询必须在本地引擎路径也跑起来——外部进程（daemon）
-  // 的推送（AI 结果等）只能靠这个定时器取回；本地引擎接管后按键不再走
-  // RPC，没有它推送帧会一直躺在管道里（用户实报 AI 无反应）。
-  refreshAsyncPollTimer();
-  if (localEngine_.active()) {
-    Json::Value ret;
-  if (localEngine_.filterKeyDown(keyEvent, ret)) {
-    ret["success"] = true;
-    handleRpcResponse(ret, nullptr, true);
-      const bool consumed = ret["returnValue"].asBool();
-      // 2026-11-02：本地引擎"已处理但未消费"的 Ctrl/Alt 组合键继续送 RPC。
-      // AI 等异步能力在外部进程（daemon），DLL 不通这一层它们永远收不到
-      // 热键（用户实报 Ctrl+Shift+E 无反应）。只放行带 Ctrl/Alt 的组合，
-      // 普通字母仍零 RPC。
-      const BYTE *ks = keyEvent.keyStates();
-      const bool hasCtrlOrAlt =
-          ks != nullptr &&
-          (((ks[VK_CONTROL] & 0x80) != 0) || ((ks[VK_MENU] & 0x80) != 0));
-      if (consumed || !hasCtrlOrAlt) {
-        return consumed;
-      }
-      appendRpcGuardLog(L"[filterKeyDown] unconsumed chord -> RPC vk=" +
-                        std::to_wstring(keyEvent.keyCode()));
+  // 云剪贴板列表激活期间走 RPC（本地引擎会吃掉选字键刷掉列表）。
+  // 引擎还在首次部署（全新用户目录 1.5-5 秒）时，可打印键先等它就绪再判：
+  // 直接放行会变成"刚装完第一句拼音直落英文"（2026-11-03 实报）。
+  if (isOrdinaryPrintableKey(keyEvent)) {
+    RimeRuntime &runtime = RimeRuntime::instance();
+    if (runtime.supported() && !localEngine_.active() &&
+        !runtime.ready() && !runtime.failed()) {
+      const ULONGLONG waitStart = ::GetTickCount64();
+      runtime.waitUntilReady(5000);
+      appendRpcGuardLog(L"[filterKeyDown] waited for engine " +
+                        std::to_wstring(::GetTickCount64() - waitStart) + L"ms");
     }
-    else {
+  }
+  maybeEngageLocalEngine();
+  if (localEngine_.active() && !cloudClipRpcMode_) {
+    Json::Value ret;
+    if (!localEngine_.filterKeyDown(keyEvent, ret)) {
       appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
       return false;
     }
+    ret["success"] = true;
+    handleRpcResponse(ret, nullptr, true);
+    const bool consumed = ret["returnValue"].asBool();
+    const BYTE *ks = keyEvent.keyStates();
+    const bool hasCtrlOrAlt =
+        ks != nullptr &&
+        (((ks[VK_CONTROL] & 0x80) != 0) || ((ks[VK_MENU] & 0x80) != 0));
+    if (consumed || !hasCtrlOrAlt) {
+      return consumed;
+    }
+    // 本地引擎未消费的 Ctrl/Alt 组合键转发 daemon 判定（AI 热键需要组字、
+    // 云剪贴板 Ctrl+0 无需组字、其他组合键 daemon 返回 0 交还宿主）。
+    // 普通字母键不走这条路——打字热路径零 RPC 不动摇。
+    // daemon 的 rime session 独立于本进程，组字/候选随请求带上（AI 用）。
+    Json::Value state;
+    localEngine_.getCompositionState(state);
+    auto req = createRpcRequest("filterKeyDown");
+    addKeyEventToRpcRequest(req, keyEvent);
+    req["localComposition"] = state["composition"];
+    req["localCandidates"] = state["candidates"];
+    Json::Value aiRet;
+    if (!callRpcMethod(req, aiRet) ||
+        !handleRpcResponse(aiRet, nullptr, false)) {
+      return false;
+    }
+    const bool aiConsumed = aiRet["returnValue"].asBool();
+    if (aiConsumed) {
+      // 结果经推送帧回来，候选窗 WM_TIMER 轮询取回（见 applyAsyncResponse）。
+      refreshAsyncPollTimer();
+    }
+    appendRpcGuardLog(L"[filterKeyDown] chord -> daemon vk=" +
+                      std::to_wstring(keyEvent.keyCode()) +
+                      (aiConsumed ? L" ai=consumed" : L" ai=passed"));
+    return aiConsumed;
   }
   if (isOrdinaryPrintableKey(keyEvent) &&
       !waitForRpcIdleForFirstKey()) {
@@ -1046,11 +1147,15 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
 }
 
 bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
-  if (localEngine_.active()) {
+  if (localEngine_.active() && !cloudClipRpcMode_) {
     Json::Value ret;
-  if (localEngine_.onKeyDown(keyEvent, ret)) {
-    ret["success"] = true;
-    handleRpcResponse(ret, session, true);
+    if (localEngine_.onKeyDown(keyEvent, ret)) {
+      ret["success"] = true;
+      handleRpcResponse(ret, session, true);
+      // 提交即有学习：安全时机（刚上屏，组字已清）后台导出（内部 20s 防抖）。
+      if (ret.isMember("commitString")) {
+        scheduleUserDbExport(/*checkComposition=*/true);
+      }
       return ret["returnValue"].asBool();
     }
     if (isOrdinaryPrintableKey(keyEvent)) {
@@ -1124,7 +1229,7 @@ bool Client::onKeyUp(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
 }
 
 bool Client::highlightCandidate(int index) {
-  if (localEngine_.active()) {
+  if (localEngine_.active() && !cloudClipRpcMode_) {
     Json::Value ret;
     if (localEngine_.highlightCandidate(index, ret)) {
       ret["success"] = true;
@@ -1143,7 +1248,7 @@ bool Client::highlightCandidate(int index) {
 }
 
 bool Client::selectCandidate(int index) {
-  if (localEngine_.active()) {
+  if (localEngine_.active() && !cloudClipRpcMode_) {
     Json::Value ret;
     if (localEngine_.selectCandidate(index, ret)) {
       ret["success"] = true;
@@ -1162,7 +1267,7 @@ bool Client::selectCandidate(int index) {
 }
 
 bool Client::changePage(bool backward) {
-  if (localEngine_.active()) {
+  if (localEngine_.active() && !cloudClipRpcMode_) {
     Json::Value ret;
     if (localEngine_.changePage(backward, ret)) {
       ret["success"] = true;
@@ -1219,7 +1324,31 @@ bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
       handleRpcResponse(ret, nullptr, false);
       return true;
     }
-    // 其余命令（方案/主题/维护等）仍走后端（phase B 再本地化）。
+    if (id == 4 && localEngine_.toggleOption("ascii_punct", ret)) {
+      handleRpcResponse(ret, nullptr, false);
+      return true;
+    }
+    if (id == 5 && localEngine_.toggleOption("traditionalization", ret)) {
+      handleRpcResponse(ret, nullptr, false);
+      return true;
+    }
+    // 菜单开关区（2000+）：daemon 在菜单树里带了 "option"（选项名），
+    // 本地直接翻转；树过期拿不到名字时落 RPC 兜底。
+    if (id >= 2000 && id < 3000) {
+      std::string optionName;
+      for (const auto &it : lastMenuItems_) {
+        if (it.get("id", -1).asInt() == static_cast<int>(id)) {
+          optionName = it.get("option", "").asString();
+          break;
+        }
+      }
+      if (!optionName.empty() &&
+          localEngine_.toggleOption(optionName.c_str(), ret)) {
+        handleRpcResponse(ret, nullptr, false);
+        return true;
+      }
+    }
+    // 其余命令（方案/主题/维护等）仍走后端。
   }
   auto req = createRpcRequest("onCommand");
   req["commandId"] = id;
@@ -1228,6 +1357,16 @@ bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
   Json::Value ret;
   callRpcMethod(req, ret);
   if (handleRpcResponse(ret, nullptr, false)) {
+    // daemon 侧改了方案/共享态：本地引擎立即跟随（不必等下次激活）。
+    if (localEngine_.active()) {
+      // 总候选数随 customizeUi 下发：进程内引擎即时改 page size，
+      // 否则用户要重启应用才见效（2026-11-03 用户实报）。
+      const Json::Value &ui = ret["customizeUi"];
+      if (ui.isObject() && ui["candidateCount"].isInt()) {
+        localEngine_.applyCandidateCount(ui["candidateCount"].asInt());
+      }
+      localEngine_.refreshSyncedSettings();
+    }
     return ret["returnValue"].asBool();
   }
   return false;
@@ -1247,6 +1386,10 @@ bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
                     std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
   {
     const Json::Value& mi = result["menuItems"];
+    if (mi.isArray()) {
+      // 留存菜单树：onCommand 开关区（2000+）据此映射 id -> 选项名。
+      lastMenuItems_ = mi;
+    }
     std::wstring dump = L"[onMenuResult] isArray=" +
                         std::to_wstring(mi.isArray() ? 1 : 0) +
                         L" size=" + std::to_wstring(mi.size());
@@ -1421,6 +1564,9 @@ void CALLBACK Client::onAsyncPollTimer(HWND, UINT, UINT_PTR id, DWORD) {
 }
 
 void Client::refreshAsyncPollTimer() {
+  // 定时器挂在候选窗上：WM_TIMER 由候选窗过程转发给轮询（见
+  // MoqiCandidateWindow::wndProc 的 WM_TIMER 分支）。SetTimer 传窗口句柄时
+  // lpTimerFunc 不会被调用，所以必须靠窗口过程。
   HWND targetWindow = nullptr;
   if (textService_ != nullptr && textService_->candidateWindow_ != nullptr &&
       textService_->candidateWindow_->isWindow()) {
@@ -1437,8 +1583,15 @@ void Client::refreshAsyncPollTimer() {
   if (targetWindow != nullptr && asyncPollTimerId_ == 0) {
     asyncPollTimerId_ =
         ::SetTimer(targetWindow, reinterpret_cast<UINT_PTR>(this),
-                   ASYNC_RPC_POLL_INTERVAL_MS, &Client::onAsyncPollTimer);
+                   ASYNC_RPC_POLL_INTERVAL_MS, nullptr);
     asyncPollTimerWindow_ = asyncPollTimerId_ != 0 ? targetWindow : nullptr;
+    const DWORD err = asyncPollTimerId_ == 0 ? ::GetLastError() : 0;
+    appendRpcGuardLog(L"[pollTimer] set hwnd=0x" +
+                      std::to_wstring(reinterpret_cast<UINT_PTR>(targetWindow)) +
+                      L" id=" + std::to_wstring(asyncPollTimerId_) +
+                      L" gle=" + std::to_wstring(err));
+  } else if (targetWindow == nullptr) {
+    appendRpcGuardLog(L"[pollTimer] no candidate window; timer not set");
   }
 }
 
@@ -1470,6 +1623,8 @@ bool Client::readPendingPipeMessage(std::string &serializedReply) {
       bytesAvailable == 0) {
     return false;
   }
+  appendRpcTraceLog(L"[poll] pipe has " + std::to_wstring(bytesAvailable) +
+                    L" bytes pending");
 
   // Data is already available, so the overlapped read completes immediately;
   // the short timeout only guards against a race with the server closing.
@@ -1481,11 +1636,47 @@ void Client::enqueueAsyncResponse(const Json::Value &msg) {
 }
 
 bool Client::applyAsyncResponse(Json::Value &msg, Ime::EditSession *session) {
-  if (session != nullptr) {
-    return handleRpcResponse(msg, session, true);
+  // 云剪贴板推送帧带 cloudClip 标记：进入/退出转发模式（所有键走 RPC，
+  // 本地引擎不处理——否则 rime 吃掉选字键刷掉列表）。
+  if (msg.isMember("cloudClip")) {
+    cloudClipRpcMode_ = msg["cloudClip"].asBool();
+    appendRpcGuardLog(L"[cloudclip] rpc mode " +
+                      std::wstring(cloudClipRpcMode_ ? L"ON" : L"OFF"));
   }
-
-  return handleRpcResponse(msg, nullptr, true);
+  if (localEngine_.active() && msg.get("aiOverlay", false).asBool()) {
+    // 进程内引擎：AI 结果只叠到本地覆盖层（显示/选字由 LocalEngine 管），
+    // 帧里的引擎状态是 daemon 侧的空会话，不能直接套用。compositionString
+    // 是生成时的组字快照，与当前组字不一致即过期丢弃（用户已上屏/改动）。
+    Json::Value state;
+    localEngine_.getCompositionState(state);
+    const std::string prompt = msg.get("compositionString", "").asString();
+    const Json::Value &entries = msg["candidateEntries"];
+    const std::string text = entries.isArray() && entries.size() > 0
+                                 ? entries[0].get("text", "").asString()
+                                 : "";
+    if (text.empty() || state["composition"].asString() != prompt) {
+      appendRpcTraceLog(L"[ai] overlay dropped (stale or empty) prompt=" +
+                        utf8ToUtf16(prompt.c_str()));
+      return true;
+    }
+    localEngine_.setAiOverlay(text);
+    Json::Value resp;
+    if (!localEngine_.redraw(resp)) {
+      return true;
+    }
+    // 答案可能带换行（写好评三连），压成单行再入日志。
+    std::string oneLine = text;
+    for (char &c : oneLine) {
+      if (c == '\n' || c == '\r') {
+        c = ' ';
+      }
+    }
+    appendRpcTraceLog(L"[ai] overlay applied text=" +
+                      utf8ToUtf16(oneLine.c_str()) +
+                      L" session=" + (session != nullptr ? L"1" : L"0"));
+    return handleRpcResponse(resp, session, true);
+  }
+  return handleRpcResponse(msg, session, true);
 }
 
 void Client::flushPendingAsyncResponses(Ime::EditSession *session) {
@@ -1547,6 +1738,11 @@ void Client::pollAsyncResponses() {
         closeRpcConnection();
         return;
       }
+      appendRpcTraceLog(L"[poll] dequeued frame seq=" +
+                        std::to_wstring(msg.get("seqNum", -1).asInt()) +
+                        L" aiOverlay=" +
+                        std::to_wstring(
+                            msg.get("aiOverlay", false).asBool() ? 1 : 0));
       enqueueAsyncResponse(msg);
     }
   }
@@ -1885,8 +2081,9 @@ static bool isSystemAccount() {
 }
 
 // Send a notification to the server without waiting for the reply.
-// Used for fire-and-forget notifications (deactivate, composition terminated)
-// so a slow/hung backend can never block the TSF thread.
+// Used for fire-and-forget notifications (deactivate, composition terminated,
+// userdbChanged 学习合并通知) so a slow/hung backend can never block the
+// TSF/background thread.
 void Client::sendRpcNoWait(const char *methodName) {
   if (pipe_ == INVALID_HANDLE_VALUE) {
     return;
@@ -1900,6 +2097,39 @@ void Client::sendRpcNoWait(const char *methodName) {
   // never block the TSF thread.
   writePipeMessageWithTimeout(pipe_, serializedRequest.data(),
                               serializedRequest.size(), 250);
+}
+
+// 通知的可靠版（只准在后台线程调，重连可能阻塞 ~1s）：本地引擎进程平时
+// 不走管道，句柄可能已陈旧——用户词典合并通知曾因陈旧句柄静默丢失
+//（2026-11-02 实证），这里允许一次轻量重连。
+void Client::sendRpcNoWaitReliable(const char *methodName) {
+  if (pipe_ == INVALID_HANDLE_VALUE && !waitForRpcConnection(2)) {
+    appendRpcGuardLog(L"[notify] " + utf8ToUtf16(methodName) +
+                      L" failed: no connection");
+    return;
+  }
+  auto req = createRpcRequest(methodName);
+  std::string serializedRequest;
+  if (!Proto::serializeJsonMessage(req, serializedRequest)) {
+    return;
+  }
+  if (writePipeMessageWithTimeout(pipe_, serializedRequest.data(),
+                                  serializedRequest.size(), 250)) {
+    appendRpcTraceLog(L"[notify] " + utf8ToUtf16(methodName) + L" sent");
+    return;
+  }
+  appendRpcGuardLog(L"[notify] " + utf8ToUtf16(methodName) +
+                    L" write failed; reconnecting");
+  closeRpcConnection();
+  if (!waitForRpcConnection(2)) {
+    appendRpcGuardLog(L"[notify] " + utf8ToUtf16(methodName) +
+                      L" reconnect failed");
+    return;
+  }
+  const bool ok = writePipeMessageWithTimeout(
+      pipe_, serializedRequest.data(), serializedRequest.size(), 250);
+  appendRpcTraceLog(L"[notify] " + utf8ToUtf16(methodName) + L" retry ok=" +
+                    std::to_wstring(ok ? 1 : 0));
 }
 
 bool Client::ensureLauncherRunning() {
@@ -2021,7 +2251,7 @@ bool Client::waitForRpcConnection(int connectAttempts) {
     return true;
   }
 
-  appendRpcGuardLog(L"[connect] begin attempts=" +
+  appendRpcTraceLog(L"[connect] begin attempts=" +
                     std::to_wstring(connectAttempts));
   wstring serverPipeName = getPipeName(L"Launcher");
   pipe_ = connectPipe(serverPipeName.c_str(), 0);
@@ -2049,7 +2279,7 @@ bool Client::waitForRpcConnection(int connectAttempts) {
 
   if (pipe_ != INVALID_HANDLE_VALUE) {
     const bool handshakeOk = completeConnectionHandshake();
-    appendRpcGuardLog(L"[connect] handshake ok=" +
+    appendRpcTraceLog(L"[connect] handshake ok=" +
                       std::to_wstring(handshakeOk ? 1 : 0));
     return handshakeOk;
   }

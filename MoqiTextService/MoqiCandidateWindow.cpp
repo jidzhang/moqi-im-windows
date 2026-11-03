@@ -731,6 +731,17 @@ void CandidateWindow::recalculateSize() {
 
 LRESULT CandidateWindow::wndProc(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_TIMER:
+        // 2026-11-02：异步轮询定时器挂在候选窗上。SetTimer 带窗口句柄时
+        // lpTimerFunc 不会被调用，只能由窗口过程转发——外部进程（daemon）
+        // 的 AI 推送靠它取回（用户实报：结果不显示）。
+        if (textService_ != nullptr) {
+            auto *svc = static_cast<Moqi::TextService *>(textService_);
+            if (svc->client() != nullptr) {
+                svc->client()->pollAsyncForUi();
+            }
+        }
+        return 0;
     case WM_PAINT:
         onPaint();
         return 0;
@@ -799,8 +810,10 @@ void CandidateWindow::onPaint() {
         const int dividerY = preeditRc.bottom + preeditGap_ / 2;
         HPEN dividerPen = ::CreatePen(PS_SOLID, 1, kDividerColor);
         HGDIOBJ oldPen = ::SelectObject(memdc, dividerPen);
-        ::MoveToEx(memdc, borderWidth_ + padX_, dividerY, nullptr);
-        ::LineTo(memdc, rc.right - borderWidth_ - padX_, dividerY);
+        // 分隔线贴到左右边框（不再按 padX_ 内缩）——用户 2026-11-03 实报
+        // "拼音和候选之间的横线没有伸到头和尾"。
+        ::MoveToEx(memdc, borderWidth_, dividerY, nullptr);
+        ::LineTo(memdc, rc.right - borderWidth_, dividerY);
         ::SelectObject(memdc, oldPen);
         ::DeleteObject(dividerPen);
     }

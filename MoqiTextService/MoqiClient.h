@@ -105,6 +105,9 @@ private:
     Json::Value createRpcRequest(const char* methodName);
 	bool callRpcMethod(Json::Value& request, Json::Value& response);
     void sendRpcNoWait(const char* methodName);
+    // 可靠版（仅后台线程）：陈旧管道重连一次再发。TSF 线程禁用——重连会
+    // 阻塞（用户词典合并通知用）。
+    void sendRpcNoWaitReliable(const char* methodName);
 
     bool isPipeCreatedByMoqiServer(HANDLE pipe);
     bool waitForRpcConnection(int connectAttempts);
@@ -117,6 +120,20 @@ private:
 	bool readPendingPipeMessage(std::string& serializedReply);
 	void refreshAsyncPollTimer();
 	void pollAsyncResponses();
+
+public:
+  // 候选窗消息泵里的轮询入口（WM_TIMER 转发；异步推送取回用）。
+  void pollAsyncForUi() { pollAsyncResponses(); }
+
+  // 用户词典学习导出（2026-11-02）：安全时机（无组字）后台导出本进程
+  // userdb 快照→拷主词典 sync/→通知 daemon 合并。触发点=真反激活/提交后/
+  // 切走焦点；20 秒防抖 + 在途互斥。requireDirty=false 供 onDeactivate
+  //（脏标记已被消费）。force=true 跳过防抖：反激活是进程退出前最后一次
+  // 机会，被防抖吞掉就等于丢字（2026-11-03 用户实报"重启记事本就忘了"）。
+  void scheduleUserDbExport(bool checkComposition, bool requireDirty = true,
+                            bool force = false);
+
+private:
     void enqueueAsyncResponse(const Json::Value& msg);
 	void flushPendingAsyncResponsesWithCurrentContext();
 	void flushPendingAsyncResponses(Ime::EditSession* session = nullptr);
@@ -167,6 +184,15 @@ private:
 	std::vector<AutoPairRuleState> autoPairRules_;
 	LocalEngine localEngine_;
 	bool keyboardHealAttempted_;
+	// 云剪贴板列表激活期间（daemon 推送帧带 cloudClip 标记时置 true），
+	// 所有按键走 RPC（本地引擎不处理——否则 rime 吃掉选字键刷掉列表）。
+	bool cloudClipRpcMode_ = false;
+	// 最近一次语言栏菜单树（onMenu 响应）。onCommand 的开关区命令（2000+）
+	// 据此把 id 映射回选项名，在本地引擎上直接翻转（daemon 在树里带
+	// "option" 字段）。
+	Json::Value lastMenuItems_{Json::arrayValue};
+	std::atomic<bool> userDbExportInFlight_{false};
+	ULONGLONG lastUserDbExportTick_ = 0;
 };
 
 }
