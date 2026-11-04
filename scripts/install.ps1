@@ -119,8 +119,8 @@ function Copy-MoqiImeRuntime {
         [string] $DestinationRoot
     )
 
-    # 2026-11-03 Go retirement: the engine lives in MoqiDaemon (x86) and in the
-    # x64 TSF DLL in-process. MoqiIME.exe is no longer shipped or started.
+    # 2026-11-03 Go retirement: the engine lives in MoqiDaemon (x86); both TSF
+    # DLLs are thin clients. MoqiIME.exe is no longer shipped or started.
     # Everything else (input_methods/rime data, rime.dll, prebuilt dictionaries)
     # stays required.
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
@@ -194,20 +194,18 @@ $setupHelper = Resolve-ArtifactPath -Label "SetupHelper.exe" -Candidates @(
 )
 Copy-IfExists -Source $setupHelper -Destination (Join-Path $stageWin32Root "SetupHelper.exe")
 
-# 2026-11-04 单引擎架构：daemon 改 x64（加载 x64 rime.dll），32/64/UWP 全部
-# 走它；x64 地址空间保证 380MB 万象 gram 不会撞 32 位上限。
-$daemon = Resolve-ArtifactPath -Label "MoqiDaemon.exe (x64)" -Candidates @(
-    (Join-Path $RepoRoot "..\moqi-daemon\build-x64\Release\MoqiDaemon.exe"),
+# 2026-11-04 通用包：引擎固定 x86（单份 rime.dll），32/64 位薄 DLL 都连它。
+# 一个包装遍 32/64 位 Windows；引擎内存实测 <1GB，32 位地址空间够用。
+$daemon = Resolve-ArtifactPath -Label "MoqiDaemon.exe (x86)" -Candidates @(
     (Join-Path $RepoRoot "..\moqi-daemon\build-x86\Release\MoqiDaemon.exe")
 )
 Copy-Item -LiteralPath $daemon -Destination (Join-Path $stageWin32Root "MoqiDaemon.exe") -Force
 
-# x64 rime.dll for the daemon engine: installed at the app root next to it.
-$rimex64 = Resolve-ArtifactPath -Label "x64 rime.dll (daemon)" -Candidates @(
-    (Join-Path $RepoRoot "..\librime\build\bin\Release\rime.dll"),
-    (Join-Path $RepoRoot "..\moqi-ime\input_methods\rime\rime.dll")
+# 单份 x86 rime.dll，供 x86 daemon 加载。
+$rimex86 = Resolve-ArtifactPath -Label "x86 rime.dll (daemon)" -Candidates @(
+    (Join-Path $RepoRoot "..\librime\build-x86\bin\Release\rime.dll")
 )
-Copy-Item -LiteralPath $rimex64 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
+Copy-Item -LiteralPath $rimex86 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
 
 # Bundled text editor (Notepad4 zh-Hans Win32, BSD-3; shipped as notepad2.exe
 # per user decision 2026-11-03). Menu items that open config files use it.

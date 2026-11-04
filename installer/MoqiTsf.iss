@@ -1,4 +1,4 @@
-﻿; Moqi IM for Windows — Inno Setup 6 wizard (x64 only).
+﻿; Moqi IM for Windows — Inno Setup 6 wizard（x64；lite 另有 x86 变体）
 ; Build: install Inno Setup 6, then run build-installer.ps1 -StageDir <stage root>
 ; AppId / IME CLSID: keep stable across releases (ARP upgrade path).
 
@@ -46,7 +46,6 @@ DefaultDirName={autopf32}\MoqiIM
 DirExistsWarning=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
-ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 ; C4（台账，2026-10-23 修）：CloseApplications=no 会在结尾弹"关闭应用"交互页
 ; （VERYSILENT 下也弹，用户实报"点确定才关"）。产品在 ssInstall 已自行

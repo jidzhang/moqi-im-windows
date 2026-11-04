@@ -245,8 +245,16 @@ std::wstring GetSyswow64DirectoryPath() {
   return path;
 }
 
-std::wstring GetNativeSystemDirectoryPath() {
-  const fs::path sysnative =
+// 32 位 SetupHelper 在 x64 系统上 IsWow64Process 为真；用 GetNativeSystemInfo
+// 判断 OS 位数更稳（不依赖自身位数）。
+bool Is64BitWindows() {
+  SYSTEM_INFO si = {};
+  ::GetNativeSystemInfo(&si);
+  return si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64 ||
+         si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64;
+}
+
+std::wstring GetNativeSystemDirectoryPath() {  const fs::path sysnative =
       fs::path(GetWindowsDirectoryPath()) / L"Sysnative";
   if (fs::exists(sysnative)) {
     return sysnative.wstring();
@@ -725,6 +733,7 @@ int RunReregister(const Options& options) {
       fs::path(GetNativeSystemDirectoryForChildProcess()) / L"MoqiTextService.dll";
   const fs::path regsvr32 = fs::path(GetSyswow64DirectoryPath()) / L"regsvr32.exe";
   const fs::path regsvr64 = fs::path(GetNativeSystemDirectoryPath()) / L"regsvr32.exe";
+  const bool has64 = Is64BitWindows();
 
   CleanupStaleOldFiles(dest32);
   CleanupStaleOldFiles(dest64);
@@ -735,7 +744,7 @@ int RunReregister(const Options& options) {
     return ShowFailureAndReturn(L"Failed to register Win32 TSF DLL.",
                                 options.silent);
   }
-  if (!RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
+  if (has64 && !RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
     return ShowFailureAndReturn(L"Failed to register x64 TSF DLL.",
                                 options.silent);
   }
@@ -838,12 +847,13 @@ int RunInstall(const Options& options) {
       fs::path(GetNativeSystemDirectoryForChildProcess()) / L"MoqiTextService.dll";
   const fs::path regsvr32 = fs::path(GetSyswow64DirectoryPath()) / L"regsvr32.exe";
   const fs::path regsvr64 = fs::path(GetNativeSystemDirectoryPath()) / L"regsvr32.exe";
+  const bool has64 = Is64BitWindows();
 
   if (!fs::exists(source32)) {
     return ShowFailureAndReturn(L"Missing Win32 payload: " + source32.wstring(),
                                 options.silent);
   }
-  if (!fs::exists(source64)) {
+  if (has64 && !fs::exists(source64)) {
     return ShowFailureAndReturn(L"Missing x64 payload: " + source64.wstring(),
                                 options.silent);
   }
@@ -879,7 +889,7 @@ int RunInstall(const Options& options) {
   }
   initial_copy_error = 0;
   fallback_error = 0;
-  if (!CopyFileWithFallback(source64, dest64, reboot_required, &copy_error,
+  if (has64 && !CopyFileWithFallback(source64, dest64, reboot_required, &copy_error,
                             &initial_copy_error, &fallback_error)) {
     if (!((initial_copy_error == ERROR_SHARING_VIOLATION ||
            initial_copy_error == ERROR_ACCESS_DENIED ||
@@ -903,7 +913,8 @@ int RunInstall(const Options& options) {
       return ShowFailureAndReturn(L"Failed to register Win32 TSF DLL.",
                                   options.silent);
     }
-    if (!RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
+    if (has64 &&
+        !RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
       return ShowFailureAndReturn(L"Failed to register x64 TSF DLL.",
                                   options.silent);
     }
@@ -923,7 +934,7 @@ int RunInstall(const Options& options) {
     return ShowFailureAndReturn(L"Failed to register Win32 TSF DLL.",
                                 options.silent);
   }
-  if (!RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
+  if (has64 && !RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, false)) {
     return ShowFailureAndReturn(L"Failed to register x64 TSF DLL.",
                                 options.silent);
   }
@@ -945,11 +956,12 @@ int RunUninstall(const Options& options) {
       fs::path(GetNativeSystemDirectoryForChildProcess()) / L"MoqiTextService.dll";
   const fs::path regsvr32 = fs::path(GetSyswow64DirectoryPath()) / L"regsvr32.exe";
   const fs::path regsvr64 = fs::path(GetNativeSystemDirectoryPath()) / L"regsvr32.exe";
+  const bool has64 = Is64BitWindows();
 
   DeleteReregisterTask();
   DeleteLauncherAutostartTask();
   RunRegsvr(regsvr32, dest32, app_dir, true);
-  RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, true);
+  if (has64) RunRegsvr(regsvr64, dest64_for_regsvr, app_dir, true);
   ClearDefaultInputMethodOverrideIfOurs();
 
   bool reboot_required = false;
@@ -957,7 +969,7 @@ int RunUninstall(const Options& options) {
     return ShowFailureAndReturn(
         L"Failed to remove Win32 TSF DLL from " + dest32.wstring(), options.silent);
   }
-  if (!DeleteFileWithFallback(dest64, reboot_required)) {
+  if (has64 && !DeleteFileWithFallback(dest64, reboot_required)) {
     return ShowFailureAndReturn(
         L"Failed to remove x64 TSF DLL from " + dest64.wstring(), options.silent);
   }
