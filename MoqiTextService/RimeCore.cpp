@@ -785,7 +785,34 @@ RimeRuntime& RimeRuntime::instance() {
   return runtime;
 }
 
+#ifdef _WIN64
+namespace {
+
+// UWP/AppContainer（便笺等）对包外用户目录、DLL 的访问受限，进程内引擎
+// 初始化不可靠；这类进程一律走桌面 daemon。
+bool isAppContainerProcess() {
+  HANDLE token = nullptr;
+  if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    return false;
+  }
+  DWORD isAppContainer = 0;
+  DWORD returned = 0;
+  const BOOL ok = ::GetTokenInformation(
+      token, TokenIsAppContainer, &isAppContainer, sizeof(isAppContainer),
+      &returned);
+  ::CloseHandle(token);
+  return ok != FALSE && isAppContainer != 0;
+}
+
+}  // namespace
+#endif
+
 bool RimeRuntime::supported() {
+#ifdef _WIN64
+  if (isAppContainerProcess()) {
+    return false;
+  }
+#endif
 #if !defined(_WIN64) && !defined(MOQI_ALLOW_X86_ENGINE)
   // x86 TSF DLL has no engine dll to load; the helper defines
   // MOQI_ALLOW_X86_ENGINE because it ships with an x86 rime.dll.

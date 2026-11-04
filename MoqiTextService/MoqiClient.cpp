@@ -1066,44 +1066,46 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   maybeEngageLocalEngine();
   if (localEngine_.active() && !cloudClipRpcMode_) {
     Json::Value ret;
-    if (!localEngine_.filterKeyDown(keyEvent, ret)) {
-      appendRpcGuardLog(L"[filterKeyDown] local engine failed; key passed");
-      return false;
+    if (localEngine_.filterKeyDown(keyEvent, ret)) {
+      ret["success"] = true;
+      handleRpcResponse(ret, nullptr, true);
+      const bool consumed = ret["returnValue"].asBool();
+      const BYTE *ks = keyEvent.keyStates();
+      const bool hasCtrlOrAlt =
+          ks != nullptr &&
+          (((ks[VK_CONTROL] & 0x80) != 0) || ((ks[VK_MENU] & 0x80) != 0));
+      if (consumed || !hasCtrlOrAlt) {
+        return consumed;
+      }
+      // 本地引擎未消费的 Ctrl/Alt 组合键转发 daemon 判定（AI 热键需要组字、
+      // 云剪贴板 Ctrl+0 无需组字、其他组合键 daemon 返回 0 交还宿主）。
+      // 普通字母键不走这条路——打字热路径零 RPC 不动摇。
+      // daemon 的 rime session 独立于本进程，组字/候选随请求带上（AI 用）。
+      Json::Value state;
+      localEngine_.getCompositionState(state);
+      auto req = createRpcRequest("filterKeyDown");
+      addKeyEventToRpcRequest(req, keyEvent);
+      req["localComposition"] = state["composition"];
+      req["localCandidates"] = state["candidates"];
+      Json::Value aiRet;
+      if (!callRpcMethod(req, aiRet) ||
+          !handleRpcResponse(aiRet, nullptr, false)) {
+        return false;
+      }
+      const bool aiConsumed = aiRet["returnValue"].asBool();
+      if (aiConsumed) {
+        // 结果经推送帧回来，候选窗 WM_TIMER 轮询取回（见 applyAsyncResponse）。
+        refreshAsyncPollTimer();
+      }
+      appendRpcGuardLog(L"[filterKeyDown] chord -> daemon vk=" +
+                        std::to_wstring(keyEvent.keyCode()) +
+                        (aiConsumed ? L" ai=consumed" : L" ai=passed"));
+      return aiConsumed;
     }
-    ret["success"] = true;
-    handleRpcResponse(ret, nullptr, true);
-    const bool consumed = ret["returnValue"].asBool();
-    const BYTE *ks = keyEvent.keyStates();
-    const bool hasCtrlOrAlt =
-        ks != nullptr &&
-        (((ks[VK_CONTROL] & 0x80) != 0) || ((ks[VK_MENU] & 0x80) != 0));
-    if (consumed || !hasCtrlOrAlt) {
-      return consumed;
-    }
-    // 本地引擎未消费的 Ctrl/Alt 组合键转发 daemon 判定（AI 热键需要组字、
-    // 云剪贴板 Ctrl+0 无需组字、其他组合键 daemon 返回 0 交还宿主）。
-    // 普通字母键不走这条路——打字热路径零 RPC 不动摇。
-    // daemon 的 rime session 独立于本进程，组字/候选随请求带上（AI 用）。
-    Json::Value state;
-    localEngine_.getCompositionState(state);
-    auto req = createRpcRequest("filterKeyDown");
-    addKeyEventToRpcRequest(req, keyEvent);
-    req["localComposition"] = state["composition"];
-    req["localCandidates"] = state["candidates"];
-    Json::Value aiRet;
-    if (!callRpcMethod(req, aiRet) ||
-        !handleRpcResponse(aiRet, nullptr, false)) {
-      return false;
-    }
-    const bool aiConsumed = aiRet["returnValue"].asBool();
-    if (aiConsumed) {
-      // 结果经推送帧回来，候选窗 WM_TIMER 轮询取回（见 applyAsyncResponse）。
-      refreshAsyncPollTimer();
-    }
-    appendRpcGuardLog(L"[filterKeyDown] chord -> daemon vk=" +
-                      std::to_wstring(keyEvent.keyCode()) +
-                      (aiConsumed ? L" ai=consumed" : L" ai=passed"));
-    return aiConsumed;
+    // 本地引擎失败（UWP/AppContainer 里常见：用户目录不可写/初始化失败）
+    // 不能把键丢掉，落到下面的 daemon RPC 路径；32 位后端不依赖包内权限。
+    appendRpcGuardLog(
+        L"[filterKeyDown] local engine failed; falling back to daemon");
   }
   if (isOrdinaryPrintableKey(keyEvent) &&
       !waitForRpcIdleForFirstKey()) {
