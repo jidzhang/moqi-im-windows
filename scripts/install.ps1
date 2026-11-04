@@ -194,20 +194,20 @@ $setupHelper = Resolve-ArtifactPath -Label "SetupHelper.exe" -Candidates @(
 )
 Copy-IfExists -Source $setupHelper -Destination (Join-Path $stageWin32Root "SetupHelper.exe")
 
-# Phase 5a: MoqiDaemon (x86) fronts the hot path; backends.json points at it.
-# Missing daemon or x86 rime.dll would leave the install with a dead key path,
-# so both are hard requirements (backends.json command must match the file name).
-$daemon = Resolve-ArtifactPath -Label "MoqiDaemon.exe" -Candidates @(
+# 2026-11-04 单引擎架构：daemon 改 x64（加载 x64 rime.dll），32/64/UWP 全部
+# 走它；x64 地址空间保证 380MB 万象 gram 不会撞 32 位上限。
+$daemon = Resolve-ArtifactPath -Label "MoqiDaemon.exe (x64)" -Candidates @(
+    (Join-Path $RepoRoot "..\moqi-daemon\build-x64\Release\MoqiDaemon.exe"),
     (Join-Path $RepoRoot "..\moqi-daemon\build-x86\Release\MoqiDaemon.exe")
 )
 Copy-Item -LiteralPath $daemon -Destination (Join-Path $stageWin32Root "MoqiDaemon.exe") -Force
 
-# x86 rime.dll for the daemon engine: installed at the app root next to it.
-# moqi-ime\input_methods\rime\rime.dll stays x64 (Go child / x64 TSF DLL).
-$rimex86 = Resolve-ArtifactPath -Label "x86 rime.dll (daemon)" -Candidates @(
-    (Join-Path $RepoRoot "..\librime\build-x86\bin\Release\rime.dll")
+# x64 rime.dll for the daemon engine: installed at the app root next to it.
+$rimex64 = Resolve-ArtifactPath -Label "x64 rime.dll (daemon)" -Candidates @(
+    (Join-Path $RepoRoot "..\librime\build\bin\Release\rime.dll"),
+    (Join-Path $RepoRoot "..\moqi-ime\input_methods\rime\rime.dll")
 )
-Copy-Item -LiteralPath $rimex86 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
+Copy-Item -LiteralPath $rimex64 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
 
 # Bundled text editor (Notepad4 zh-Hans Win32, BSD-3; shipped as notepad2.exe
 # per user decision 2026-11-03). Menu items that open config files use it.
