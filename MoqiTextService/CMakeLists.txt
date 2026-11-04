@@ -27,10 +27,7 @@ add_library(MoqiTextService SHARED
     MoqiClient.cpp
     MoqiClient.h
     JsonCompat.h
-    LocalEngine.cpp
     LocalEngine.h
-    LocalRerank.cpp
-    LocalRerank.h
     RimeCore.cpp
     RimeCore.h
     MoqiLangBarButton.cpp

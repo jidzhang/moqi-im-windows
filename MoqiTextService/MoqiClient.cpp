@@ -18,6 +18,7 @@
 //
 
 #include "MoqiClient.h"
+#include "RimeCore.h"
 #include "JsonCompat.h"
 #include "KeyGuardLog.h"
 #include "libIME2/src/Utils.h"
@@ -2198,7 +2199,11 @@ bool Client::ensureLauncherRunning() {
 
 // Check whether a MoqiLauncher process exists (via its single-instance mutex).
 bool Client::isLauncherProcessRunning() {
-  HANDLE mutex = ::OpenMutexW(MUTEX_ALL_ACCESS, FALSE, L"MoqiLaunchMutex");
+  DWORD sessionId = 0;
+  ::ProcessIdToSessionId(::GetCurrentProcessId(), &sessionId);
+  const std::wstring mutexName =
+      L"MoqiLaunchMutex." + std::to_wstring(sessionId);
+  HANDLE mutex = ::OpenMutexW(MUTEX_ALL_ACCESS, FALSE, mutexName.c_str());
   if (mutex != nullptr) {
     ::CloseHandle(mutex);
     return true;
@@ -2225,11 +2230,15 @@ bool Client::forceRestartLauncher() {
   }
   std::wstring taskkillPath = std::wstring(systemDir) + L"\\taskkill.exe";
   // 阶段5c：daemon（serve 模式）与退休期的 MoqiLaunch 都要清掉，
-  // 否则残留进程继续占着管道。
+  // 否则残留进程继续占着管道。只清理当前会话，避免 RDP 多会话互杀。
+  DWORD sessionId = 0;
+  ::ProcessIdToSessionId(::GetCurrentProcessId(), &sessionId);
+  const std::wstring sessionFilter =
+      L" /FI \"SESSION eq " + std::to_wstring(sessionId) + L"\"";
   const wchar_t *images[] = {L"MoqiDaemon.exe", L"MoqiLaunch.exe"};
   for (const wchar_t *image : images) {
     std::wstring commandLine =
-        L"\"" + taskkillPath + L"\" /F /IM " + image;
+        L"\"" + taskkillPath + L"\" /F /IM " + image + sessionFilter;
     STARTUPINFOW startupInfo = {};
     startupInfo.cb = sizeof(startupInfo);
     PROCESS_INFORMATION processInfo = {};
@@ -2360,6 +2369,10 @@ wstring Client::getPipeName(const wchar_t *base_name) {
   pipeName += username.get();
   pipeName += L"\\MoqiIM\\";
   pipeName += base_name;
+  // 多会话隔离：同一用户在 RDP/远程会话各有一个 daemon。
+  DWORD sessionId = 0;
+  ::ProcessIdToSessionId(::GetCurrentProcessId(), &sessionId);
+  pipeName += L"." + std::to_wstring(sessionId);
   return pipeName;
 }
 
