@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Build all FOUR installer tiers locally (2026-10-25, user decision):
+  Build all FIVE installer tiers locally (2026-11-04, universal x86 engine):
   lite / standard / essay / wiki / wanxiang.
 
   The standard tier is produced by _all_in_package.ps1, which also builds the
-  shared stage tree and version.txt. The other three tiers reuse that stage
+  shared stage tree and version.txt. The other four tiers reuse that stage
   with -OutputName / -ExcludeBuild / -GramPath, exactly like CI does.
 
   The wanxiang tier is LOCAL ONLY: full payload with the wanxiang grammar

@@ -2,7 +2,7 @@
 
 ## 一、五个下载怎么选（2026-10-27 实测重写）
 
-实测口径：产品原生栈（rime.dll + Go 管线，无 GUI）· 整句 120 句 + 混拼 500 对 ·
+实测口径：产品原生栈（rime.dll + C++ daemon，无 GUI）· 整句 120 句 + 混拼 500 对 ·
 每臂全新用户目录 · 复跑一致。方法与冻结工件见 benchmark 仓
 `docs/protocol_native_stack.md`、结论见 `docs/install_recommendation.md`。
 
@@ -17,7 +17,7 @@
 一句话：**日常用标准版**；写长文用 wanxiang；中间选择 essay；极限小包用 lite；
 wiki 档暂无收益。
 
-所有安装包都同时安装 32 位和 64 位 TSF DLL，不需要按系统架构二选一。
+所有安装包都是**通用包**：引擎固定 32 位（`MoqiDaemon.exe` + `rime.dll`），同时安装 32/64 位两个薄 TSF DLL。32 位 Windows 和 64 位 Windows 用同一个安装包；64 位系统上的 32 位应用走 `SysWOW64` 客户端，64 位应用走 `System32` 客户端，都连同一个 daemon。
 
 ## 二、单独安装语法模型（第 4 个文件）
 
@@ -36,7 +36,7 @@ wiki 档暂无收益。
    C:\Program Files (x86)\MoqiIM\moqi-ime\input_methods\rime\data\
    ```
 
-3. 让墨奇重新加载：托盘图标右键 → **“刷新配置(&R)”**，或退出 `MoqiLauncher` 再启动。
+3. 让墨奇重新加载：托盘图标右键 → **“刷新配置(&R)”**，或结束 `MoqiDaemon.exe` 后重新启动。
 4. 默认配置 `grammar_model` 为 `auto`，会自动选择上述两个目录里 **≥50MB 的最大 `.gram`**（2026-10-27 由 64MB 下调，自训模型 64.5MB 由此可被自动识别），不需要改配置。
 
 复制后目录里应该有（二选一即可，推荐用户目录）：
@@ -46,9 +46,9 @@ wiki 档暂无收益。
 C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选（管理员）
 ```
 
-> **2026-10-21 起安装包不再自带 7MB 的 `zh-moqi.gram`**：实测它对准确率没有提升
-> （整句 59.92 → 59.95，噪声级），却让每个包白背 7MB，所以直接删掉了。
-> 标准包/lite 包里现在**一个 `.gram` 都没有**，这是预期行为，不是装漏了。
+> **gram 现状（2026-11-04）**：标准包自带 8.6MB `zh-moqi.gram`（实测整句 +3.5 分），
+> lite 自带 1.1MB 裁剪版；两档都不是“零 gram”。essay / wanxiang / wiki 各带一个
+> 大模型。也可以把 `.gram` 放用户目录单独启用。
 
 > 覆盖安装会先清空 `{app}\moqi-ime` 再释放新文件，放在安装目录里的 `.gram` 会被删掉；
 > 放在 `%APPDATA%\Moqi\Rime\` 里的不受影响。
@@ -75,12 +75,13 @@ C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选
 
 ## 四、为什么没有单独的 x86 / x64 包
 
-三个包都带：
+因为引擎是**单进程 + 32 位**的通用设计：
 
-- `MoqiTextService.dll`（32 位，1.67 MB）
-- `x64\MoqiTextService.dll`（64 位，1.95 MB）
+- `MoqiDaemon.exe` + `rime.dll`（均为 x86）：唯一引擎，32/64 位系统都能跑
+- `MoqiTextService.dll`（x86）给 32 位应用，`x64\MoqiTextService.dll` 给 64 位应用
+- 两个客户端都不加载 rime.dll，只通过命名管道连 daemon
 
-拆开最多省约 2 MB 原始体积（压缩后约 1 MB，不到整包的 1%），但会让另一架构的应用（部分 32 位软件）失去输入法支持，`SetupHelper` 也需要同时拿到两个 DLL 才能完成注册。体积大头是词库（122 MB 预编译数据 + 约 100 MB 源数据）和可选的 196.8 MB gram，所以保持一个包同时装双架构。
+所以不需要按系统架构拆包；拆开只会让用户装错。体积大头仍是词库与可选 gram。
 
 ## 五、本次更新（2026-10-21）要点
 
@@ -88,5 +89,5 @@ C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选
   `4.5` → `4.5`，`12.` → `12.`；单独打 `.` 仍是中文句号 `。`；
   拼音输入过程中按数字仍然用于选择第 N 个候选。
 - **候选窗**：首格高亮四边贴边（上下左右都贴到边），直角；默认 7 个候选、每行 9 个。
-- **语法模型**：不再自带 7MB 小模型；标准包/lite 包不含任何 `.gram`，
+- **语法模型**：标准包自带 8.6MB 小模型，lite 带 1.1MB 裁剪版；
   essay / wanxiang / wiki 三档各带一个模型；也可单独下载 `.gram` 放入用户目录启用。
