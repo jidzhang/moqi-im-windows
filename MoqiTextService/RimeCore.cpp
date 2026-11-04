@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -102,6 +103,331 @@ wstring currentSchemeSetDirName() {
   }
   return name;
 }
+
+// ------------------------------------------- 共享用户配置层（2026-11-04）--
+// 2.0 的 64 位引擎每个进程一个 user_data_dir（p-<hex>），daemon 用
+// UserDictMaster；如果用户把 schema/词库/gram 放进任何一个，其它进程都看不见，
+// Rime 生态的"拷进去 + 重新部署"就失效了。
+// 这里把 %APPDATA%\Moqi\<方案集> 定义为唯一用户配置目录，初始化时用硬链接
+// 投影进各进程目录：配置共享、userdb 仍各自独占。
+
+wstring sharedUserConfigDir() {
+  const wstring root = moqiAppDataDir();
+  if (root.empty()) return L"";
+  return root + L"\\" + currentSchemeSetDirName();
+}
+
+namespace {
+
+bool endsWithNoCase(const wstring& s, const wchar_t* suffix) {
+  const size_t n = wcslen(suffix);
+  if (s.size() < n) return false;
+  for (size_t i = 0; i < n; ++i) {
+    if (::towlower(s[s.size() - n + i]) != ::towlower(suffix[i])) return false;
+  }
+  return true;
+}
+
+// build/、userdb、sync 是引擎自己的状态；installation.yaml/user.yaml/
+// rime_frost.custom.yaml 由 librime 或本产品写入，不能从共享层反向覆盖。
+bool isSyncedConfigPath(const wstring& rel) {
+  if (rel.empty()) return false;
+  wstring lower = rel;
+  for (wchar_t& c : lower) c = (wchar_t)::towlower(c);
+  if (lower.rfind(L"build\\", 0) == 0 || lower.rfind(L"build/", 0) == 0) {
+    return false;
+  }
+  if (lower.rfind(L"sync\\", 0) == 0 || lower.rfind(L"sync/", 0) == 0) {
+    return false;
+  }
+  if (lower.find(L".userdb\\") != wstring::npos ||
+      lower.find(L".userdb/") != wstring::npos) {
+    return false;
+  }
+  const size_t slash = lower.find_last_of(L"\\/");
+  const wstring name = slash == wstring::npos ? lower : lower.substr(slash + 1);
+  if (name == L"installation.yaml" || name == L"user.yaml" ||
+      name == L"rime_frost.custom.yaml" || name == L".master-import-stamp" ||
+      endsWithNoCase(name, L".log")) {
+    return false;
+  }
+  return true;
+}
+
+bool sameFileIdentity(const wstring& a, const wstring& b) {
+  HANDLE ha = ::CreateFileW(
+      a.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  HANDLE hb = ::CreateFileW(
+      b.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  bool same = false;
+  if (ha != INVALID_HANDLE_VALUE && hb != INVALID_HANDLE_VALUE) {
+    BY_HANDLE_FILE_INFORMATION ia = {};
+    BY_HANDLE_FILE_INFORMATION ib = {};
+    same = ::GetFileInformationByHandle(ha, &ia) &&
+           ::GetFileInformationByHandle(hb, &ib) &&
+           ia.dwVolumeSerialNumber == ib.dwVolumeSerialNumber &&
+           ia.nFileIndexHigh == ib.nFileIndexHigh &&
+           ia.nFileIndexLow == ib.nFileIndexLow;
+  }
+  if (ha != INVALID_HANDLE_VALUE) ::CloseHandle(ha);
+  if (hb != INVALID_HANDLE_VALUE) ::CloseHandle(hb);
+  return same;
+}
+
+int syncConfigTree(const wstring& src, const wstring& targetDir) {
+  error_code ec;
+  struct Entry {
+    wstring rel;
+    wstring full;
+  };
+  vector<Entry> entries;
+  for (auto it = filesystem::recursive_directory_iterator(
+           src, filesystem::directory_options::skip_permission_denied, ec);
+       !ec && it != filesystem::recursive_directory_iterator();
+       it.increment(ec)) {
+    error_code fec;
+    if (it->is_directory(fec)) continue;
+    const wstring rel = it->path().lexically_relative(src).wstring();
+    if (!isSyncedConfigPath(rel)) continue;
+    entries.push_back({rel, it->path().wstring()});
+  }
+  sort(entries.begin(), entries.end(),
+       [](const Entry& a, const Entry& b) { return a.rel < b.rel; });
+
+  int synced = 0;
+  for (const Entry& e : entries) {
+    const wstring dst = targetDir + L"\\" + e.rel;
+    if (sameFileIdentity(dst, e.full)) continue;
+    error_code dec;
+    filesystem::create_directories(filesystem::path(dst).parent_path(), dec);
+    ::DeleteFileW(dst.c_str());
+    if (!::CreateHardLinkW(dst.c_str(), e.full.c_str(), nullptr) &&
+        !::CopyFileW(e.full.c_str(), dst.c_str(), FALSE)) {
+      continue;
+    }
+    ++synced;
+  }
+  return synced;
+}
+
+const char kUserDictMountMarker[] = "moqi user-dict mount";
+
+wstring userDictsDir() {
+  const wstring shared = sharedUserConfigDir();
+  return shared.empty() ? wstring() : shared + L"\\dicts";
+}
+
+}  // namespace
+
+int syncSharedUserConfig(const wstring& targetDir) {
+  const wstring src = sharedUserConfigDir();
+  if (src.empty() || targetDir.empty()) return 0;
+  error_code ec;
+  filesystem::create_directories(src, ec);
+  filesystem::create_directories(src + L"\\dicts", ec);
+  if (!filesystem::exists(src, ec)) return 0;
+  const int synced = syncConfigTree(src, targetDir);
+  coreLog(L"user config sync: synced=" + to_wstring(synced) + L" src=" + src +
+          L" target=" + targetDir);
+  return synced;
+}
+
+bool mountUserDictionaries(const wstring& targetDir,
+                           const wstring& sharedDataDir) {
+  const wstring dir = userDictsDir();
+  if (dir.empty() || targetDir.empty() || sharedDataDir.empty()) return false;
+
+  vector<wstring> stems;
+  error_code ec;
+  if (filesystem::exists(dir, ec)) {
+    for (auto& de : filesystem::directory_iterator(dir, ec)) {
+      error_code fec;
+      if (!de.is_regular_file(fec)) continue;
+      const wstring name = de.path().filename().wstring();
+      if (name.size() <= 10) continue;
+      if (name.compare(name.size() - 10, 10, L".dict.yaml") != 0) continue;
+      stems.push_back(name.substr(0, name.size() - 10));
+    }
+  }
+  sort(stems.begin(), stems.end());
+  stems.erase(unique(stems.begin(), stems.end()), stems.end());
+
+  const wstring outPath = targetDir + L"\\rime_frost.dict.yaml";
+  const string existing = readFileUtf8(outPath);
+  if (stems.empty()) {
+    if (existing.find(kUserDictMountMarker) != string::npos) {
+      ::DeleteFileW(outPath.c_str());
+    }
+    return false;
+  }
+  // 用户自己维护的同名 dict：尊重用户，不覆盖。
+  if (!existing.empty() &&
+      existing.find(kUserDictMountMarker) == string::npos) {
+    coreLog(L"user dict mount skipped: rime_frost.dict.yaml is user-owned");
+    return false;
+  }
+  const string base = readFileUtf8(sharedDataDir + L"\\rime_frost.dict.yaml");
+  if (base.empty()) {
+    coreLog(L"user dict mount failed: base rime_frost.dict.yaml missing");
+    return false;
+  }
+  const size_t key = base.find("\nimport_tables:");
+  if (key == string::npos) {
+    coreLog(L"user dict mount failed: import_tables not found");
+    return false;
+  }
+  size_t lineEnd = base.find('\n', key + 1);
+  if (lineEnd == string::npos) lineEnd = base.size();
+  string out(base, 0, lineEnd + 1);
+  out += "  # ";
+  out += kUserDictMountMarker;
+  out += "\n";
+  for (const wstring& stem : stems) {
+    out += "  - dicts/" + wideToUtf8(stem.c_str()) + "\n";
+  }
+  out.append(base, lineEnd + 1, string::npos);
+  if (out == existing) {
+    return true;  // 内容没变，保留 mtime，避免每次都触发重新部署
+  }
+  writeFileUtf8(outPath, out);
+  // 生成文件的 mtime 对齐基础词库：否则"源比预编译新"会让每个进程重编。
+  error_code tec;
+  const auto baseTime =
+      filesystem::last_write_time(sharedDataDir + L"\\rime_frost.dict.yaml", tec);
+  if (!tec) {
+    filesystem::last_write_time(outPath, baseTime, tec);
+  }
+  coreLog(L"user dicts mounted: " + to_wstring(stems.size()));
+  return true;
+}
+
+// ------------------------------- 用户词库编译缓存（prebuilt 合并目录） --
+// 用户词库是配置指纹的一部分：指纹不变就复用上次编译好的 prebuilt 目录，
+// 新进程不再各自重编；指纹变了才重建，避免把半旧的 .bin 当最新。
+
+namespace {
+
+uint64_t fnv1a(uint64_t h, const void* data, size_t n) {
+  const auto* p = static_cast<const unsigned char*>(data);
+  for (size_t i = 0; i < n; ++i) {
+    h ^= p[i];
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+string userConfigFingerprint(const wstring& userDir,
+                             const wstring& sharedDataDir) {
+  struct Item {
+    wstring rel;
+    uintmax_t size = 0;
+    int64_t mtime = 0;
+  };
+  vector<Item> items;
+  error_code ec;
+  for (auto it = filesystem::recursive_directory_iterator(
+           userDir, filesystem::directory_options::skip_permission_denied, ec);
+       !ec && it != filesystem::recursive_directory_iterator();
+       it.increment(ec)) {
+    error_code fec;
+    if (it->is_directory(fec)) continue;
+    const wstring rel = it->path().lexically_relative(userDir).wstring();
+    if (!isSyncedConfigPath(rel)) continue;
+    // 生成的挂载文件是派生结果：词库文件本身已参与指纹，跳过它避免 mtime 抖动。
+    if (rel == L"rime_frost.dict.yaml" &&
+        readFileUtf8(it->path().wstring()).find(kUserDictMountMarker) !=
+            string::npos) {
+      continue;
+    }
+    items.push_back(
+        {rel, it->file_size(fec),
+         static_cast<int64_t>(
+             filesystem::last_write_time(it->path(), fec).time_since_epoch().count())});
+  }
+  sort(items.begin(), items.end(),
+       [](const Item& a, const Item& b) { return a.rel < b.rel; });
+
+  uint64_t h = 1469598103934665603ULL;
+  for (const Item& item : items) {
+    const string rel = wideToUtf8(item.rel.c_str());
+    h = fnv1a(h, rel.data(), rel.size());
+    h = fnv1a(h, &item.size, sizeof(item.size));
+    h = fnv1a(h, &item.mtime, sizeof(item.mtime));
+  }
+  // 安装目录的预编译换了（升级包），旧缓存也不能再用。
+  error_code bec;
+  const uintmax_t baseTable = filesystem::file_size(
+      sharedDataDir + L"\\build\\rime_frost.table.bin", bec);
+  if (!bec) h = fnv1a(h, &baseTable, sizeof(baseTable));
+
+  wchar_t buf[17] = {};
+  swprintf_s(buf, L"%016llx", static_cast<unsigned long long>(h));
+  return wideToUtf8(buf);
+}
+
+void linkOrCopyFile(const wstring& dst, const wstring& src, bool copyOnly) {
+  error_code ec;
+  filesystem::create_directories(filesystem::path(dst).parent_path(), ec);
+  ::DeleteFileW(dst.c_str());
+  if (!copyOnly && ::CreateHardLinkW(dst.c_str(), src.c_str(), nullptr)) {
+    return;
+  }
+  ::CopyFileW(src.c_str(), dst.c_str(), FALSE);
+}
+
+// baseBuild 只读、可硬链接；userBuild 是本次编译产物，复制进缓存，避免后续
+// 进程写 staging 时污染缓存。
+void copyBuildTreeInto(const wstring& src, const wstring& dstRoot, bool copyOnly) {
+  error_code ec;
+  if (src.empty() || !filesystem::exists(src, ec)) return;
+  for (auto it = filesystem::recursive_directory_iterator(
+           src, filesystem::directory_options::skip_permission_denied, ec);
+       !ec && it != filesystem::recursive_directory_iterator();
+       it.increment(ec)) {
+    error_code fec;
+    if (it->is_directory(fec)) continue;
+    const wstring rel = it->path().lexically_relative(src).wstring();
+    linkOrCopyFile(dstRoot + L"\\" + rel, it->path().wstring(), copyOnly);
+  }
+}
+
+bool materializePrebuiltCache(const wstring& cacheDir, const wstring& baseBuild,
+                              const wstring& userBuild) {
+  error_code ec;
+  filesystem::create_directories(cacheDir, ec);
+  if (ec) return false;
+  copyBuildTreeInto(baseBuild, cacheDir, false);
+  copyBuildTreeInto(userBuild, cacheDir, true);
+  return true;
+}
+
+void prunePrebuiltCaches() {
+  const wstring root = moqiAppDataDir() + L"\\Prebuilt";
+  error_code ec;
+  if (!filesystem::exists(root, ec)) return;
+  struct Dir {
+    wstring path;
+    filesystem::file_time_type time;
+  };
+  vector<Dir> dirs;
+  for (auto& de : filesystem::directory_iterator(root, ec)) {
+    error_code fec;
+    if (!de.is_directory(fec)) continue;
+    dirs.push_back({de.path().wstring(),
+                    filesystem::last_write_time(de.path(), fec)});
+  }
+  if (dirs.size() <= 2) return;
+  sort(dirs.begin(), dirs.end(),
+       [](const Dir& a, const Dir& b) { return a.time > b.time; });
+  for (size_t i = 2; i < dirs.size(); ++i) {
+    error_code rec;
+    filesystem::remove_all(dirs[i].path, rec);
+  }
+}
+
+}  // namespace
 
 // --------------------------------------------------------- key constants --
 
@@ -450,7 +776,11 @@ string buildLocalBehaviorPatch(const wstring& sharedDataDir) {
   if (setting.empty() || setting == "auto" || setting == "AUTO") {
     vector<wstring> dirs;
     if (!sharedDataDir.empty()) dirs.push_back(sharedDataDir);
-    dirs.push_back(moqiAppDataDir());
+    // 标准用户目录（%APPDATA%\Moqi\Rime）：雾凇/万象用户把 .gram 放这里，
+    // 必须参与 auto 扫描，否则模型放了也不会被选中。
+    const wstring userDir = sharedUserConfigDir();
+    if (!userDir.empty()) dirs.push_back(userDir);
+    dirs.push_back(moqiAppDataDir());  // 1.x 旧位置，保留兼容
     lang = detectAutoGrammar(dirs);
   } else {
     string lower = setting;
@@ -809,20 +1139,23 @@ bool isAppContainerProcess() {
 
 bool RimeRuntime::supported() {
 #ifdef _WIN64
+  // 单引擎架构（2026-11-04）：64 位进程默认走 daemon RPC，不再进程内加载
+  // librime——Rime 生态要求"一个 user_data_dir + 一次 deploy"，进程内引擎
+  // 必然 N 份目录/N 次部署，无法做到整包兼容。
+  // MOQI_LOCAL_ENGINE=1 仅作为实验开关保留。
   if (isAppContainerProcess()) {
     return false;
   }
-#endif
-#if !defined(_WIN64) && !defined(MOQI_ALLOW_X86_ENGINE)
-  // x86 TSF DLL has no engine dll to load; the helper defines
-  // MOQI_ALLOW_X86_ENGINE because it ships with an x86 rime.dll.
-  return false;
-#else
-  // We only ship an x64 rime.dll; the x86 TSF DLL stays on the RPC path.
   wchar_t value[8] = {};
   const DWORD len =
       ::GetEnvironmentVariableW(L"MOQI_LOCAL_ENGINE", value, _countof(value));
-  return !(len > 0 && len < _countof(value) && wcscmp(value, L"0") == 0);
+  return len > 0 && len < _countof(value) && wcscmp(value, L"1") == 0;
+#elif defined(MOQI_ALLOW_X86_ENGINE)
+  // daemon/helper 自己就是引擎，不参与"是否启用进程内引擎"的判定。
+  return true;
+#else
+  // x86 TSF DLL has no engine dll to load.
+  return false;
 #endif
 }
 
@@ -983,16 +1316,6 @@ void RimeRuntime::requestInit(const wstring& programDir,
         ::FindClose(hFind);
       }
     }
-    // prebuilt 数据目录：优先**安装目录**的 data\build（打包期 rime-prebuild
-    // 编译好的 .bin，Go 的 librime.go 用的就是 datadir\build）。此前误指向
-    // 用户方案集目录的 build——全新用户没有它，每个新进程都要现场全量编译
-    // 词典（几十秒），且与刚启动 daemon 的编译互抢跨进程 init 锁，首个应用
-    // 的引擎初始化直接失败、全键直落英文（2026-11-03 用户装机实报）。
-    wstring prebuiltDir = sharedDir + L"\\build";
-    if (!filesystem::exists(prebuiltDir)) {
-      prebuiltDir = backendUserDir + L"\\build"; // 老安装/开发布局兜底
-    }
-
     error_code ec;
     filesystem::create_directories(userDir, ec);
     if (ec) {
@@ -1002,11 +1325,54 @@ void RimeRuntime::requestInit(const wstring& programDir,
       return;
     }
 
+    // 单引擎架构（2026-11-04）：daemon 的 userDir 就是共享用户目录
+    // （%APPDATA%\Moqi\<方案集>），配置、部署、userdb 全部在标准位置，
+    // 不需要再同步/挂载。兼容层只保留给可选的进程内引擎（实验开关）。
+    const bool inProcMode = masterUserDir.empty();
+    bool userDictsMounted = false;
+    if (inProcMode) {
+      syncSharedUserConfig(userDir);
+      userDictsMounted = mountUserDictionaries(userDir, sharedDir);
+    }
+
+    // prebuilt 数据目录：优先**安装目录**的 data\build（打包期 rime-prebuild
+    // 编译好的 .bin，Go 的 librime.go 用的就是 datadir\build）。此前误指向
+    // 用户方案集目录的 build——全新用户没有它，每个新进程都要现场全量编译
+    // 词典（几十秒），且与刚启动 daemon 的编译互抢跨进程 init 锁，首个应用
+    // 的引擎初始化直接失败、全键直落英文（2026-11-03 用户装机实报）。
+    wstring prebuiltDir = sharedDir + L"\\build";
+    if (!filesystem::exists(prebuiltDir)) {
+      prebuiltDir = backendUserDir + L"\\build"; // 老安装/开发布局兜底
+    }
+    // 挂了用户词库时，把"基础预编译 + 本用户词库产物"合成一个缓存目录：
+    // 指纹没变就直接用它，省掉每个新进程的用户词库重编译。
+    wstring prebuiltCacheDir;
+    if (userDictsMounted) {
+      const string fingerprint = userConfigFingerprint(userDir, sharedDir);
+      prebuiltCacheDir = moqiAppDataDir() + L"\\Prebuilt\\" +
+                         utf8ToWide(fingerprint.c_str());
+      error_code cacheEc;
+      if (filesystem::exists(prebuiltCacheDir, cacheEc)) {
+        prebuiltDir = prebuiltCacheDir;
+      }
+    }
+
     // Seed the engine-behavior patch before deployment picks it up.
-    const string patch = buildInProcCustomPatch(backendUserDir, sharedDir);
-    const wstring patchPath = userDir + L"\\rime_frost.custom.yaml";
-    if (readFileUtf8(patchPath) != patch) {
-      writeFileUtf8(patchPath, patch);
+    // 用户自带整包（如雾凇）时不再写产品补丁，避免污染标准用户目录。
+    const bool userOwnsDefault =
+        filesystem::exists(userDir + L"\\default.yaml");
+    if (userOwnsDefault && !inProcMode) {
+      // 用户自带整包（如雾凇）：清掉老版本遗留的产品补丁，保持标准目录干净。
+      const wstring stalePath = userDir + L"\\rime_frost.custom.yaml";
+      if (readFileUtf8(stalePath).find("managed by moqi") != string::npos) {
+        ::DeleteFileW(stalePath.c_str());
+      }
+    } else {
+      const string patch = buildInProcCustomPatch(backendUserDir, sharedDir);
+      const wstring patchPath = userDir + L"\\rime_frost.custom.yaml";
+      if (readFileUtf8(patchPath) != patch) {
+        writeFileUtf8(patchPath, patch);
+      }
     }
 
     // 学习种子（2026-11-03 修正）：**不再直接拷主词典的 leveldb 目录**——
@@ -1087,6 +1453,16 @@ void RimeRuntime::requestInit(const wstring& programDir,
       // deploy); join is a no-op when maintenance never started.
       rimeStartMaintenance(FALSE);
       rimeJoinMaintenanceThread();
+    }
+
+    // 首次（或配置变了）编译完用户词库后，把产物沉淀成 prebuilt 缓存，
+    // 后续进程直接复用，不再各自重编。
+    if (userDictsMounted && !prebuiltCacheDir.empty() &&
+        prebuiltDir != prebuiltCacheDir) {
+      if (materializePrebuiltCache(prebuiltCacheDir, sharedDir + L"\\build",
+                                   userDir + L"\\build")) {
+        prunePrebuiltCaches();
+      }
     }
 
     sharedDataDirUtf8_ = sharedDirUtf8;

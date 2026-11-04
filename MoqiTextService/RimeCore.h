@@ -193,6 +193,19 @@ std::wstring utf8ToWide(const char* text);
 
 std::wstring moqiAppDataDir();      // %APPDATA%\Moqi
 std::wstring localAppDataDirW();    // %LOCALAPPDATA%
+
+// 共享用户配置目录（%APPDATA%\Moqi\<方案集>，默认 Rime）。用户把 schema、
+// 词库、gram 放这里；引擎初始化时以硬链接投影进各自 user_data_dir，既让所有
+// 进程看到同一份配置，又保留 userdb 的进程独占。
+std::wstring sharedUserConfigDir();
+
+// 把共享用户目录的配置同步进 targetDir；返回同步的文件数（0 = 无变化）。
+int syncSharedUserConfig(const std::wstring& targetDir);
+
+// 按 <共享目录>\dicts\*.dict.yaml 生成 targetDir\rime_frost.dict.yaml，
+// 把用户词库挂进当前方案；用户自维护同名文件时不覆盖。返回是否挂载了词库。
+bool mountUserDictionaries(const std::wstring& targetDir,
+                           const std::wstring& sharedDataDir);
 // scheme_set.json {"current": name} with the backend's defaults.
 std::wstring currentSchemeSetDirName();
 
