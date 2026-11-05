@@ -95,6 +95,32 @@ jobs:
 
           "PROTOBUF_ROOT=$protocRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Fetch x86 rime.dll
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 引擎组件 rime.dll(x86) 与 gram 同源：内部草稿发布 rime-dll-assets
+          # 抓取，按 API size 校验落盘长度。本地打包走兄弟 librime 工作副本
+          # （install.ps1 候选一），CI 走这里（候选二）。
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $dllDir = Join-Path $env:GITHUB_WORKSPACE 'moqi-im-windows/installer/prebuilt'
+          New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
+          $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GH_REPO/releases?per_page=100" `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $assetRelease = $releases | Where-Object { $_.tag_name -eq 'rime-dll-assets' } | Select-Object -First 1
+          if (-not $assetRelease) { throw "Internal release 'rime-dll-assets' not found" }
+          $asset = $assetRelease.assets | Where-Object { $_.name -eq 'rime.dll' } | Select-Object -First 1
+          if (-not $asset) { throw "rime.dll asset missing from rime-dll-assets" }
+          $outPath = Join-Path $dllDir 'rime.dll'
+          Invoke-WebRequest -Uri $asset.url -OutFile $outPath `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/octet-stream' }
+          $len = (Get-Item -LiteralPath $outPath).Length
+          if ($len -ne $asset.size) {
+            throw "rime.dll size mismatch: got $len, expected $($asset.size)"
+          }
+
       - name: Build nightly installer
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |

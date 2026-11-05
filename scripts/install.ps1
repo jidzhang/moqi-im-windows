@@ -205,7 +205,10 @@ Copy-Item -LiteralPath $daemon -Destination (Join-Path $stageWin32Root "MoqiDaem
 
 # 单份 x86 rime.dll，供 x86 daemon 加载。
 $rimex86 = Resolve-ArtifactPath -Label "x86 rime.dll (daemon)" -Candidates @(
-    (Join-Path $RepoRoot "..\librime\build-x86\bin\Release\rime.dll")
+    # 本地：兄弟 librime 工作副本的构建产物（优先）。
+    (Join-Path $RepoRoot "..\librime\build-x86\bin\Release\rime.dll"),
+    # CI：nightly/release 工作流从内部草稿发布 rime-dll-assets 抓取落位。
+    (Join-Path $RepoRoot "installer\prebuilt\rime.dll")
 )
 Copy-Item -LiteralPath $rimex86 -Destination (Join-Path $stageWin32Root "rime.dll") -Force
 
