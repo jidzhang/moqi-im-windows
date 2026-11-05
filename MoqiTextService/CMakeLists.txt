@@ -22,6 +22,7 @@ add_library(MoqiTextService SHARED
     MoqiTextService.cpp
     MoqiTextService.def
     MoqiTextService.h
+    CandidateClamp.h
     MoqiCandidateWindow.cpp
     MoqiCandidateWindow.h
     MoqiClient.cpp
@@ -49,3 +50,11 @@ target_link_libraries(MoqiTextService
 add_executable(protocol_json_test tests/protocol_json_test.cpp)
 target_link_libraries(protocol_json_test jsoncpp_static)
 add_test(NAME protocol_json_test COMMAND protocol_json_test)
+
+# 候选窗几何纯函数回归：inputRectScore（CUAS 幽灵点判废/前景窗内外加减分/
+# 左上角小标记罚分）+ clampCandidateWindowPos（工作区四边夹取/右缘左移/
+# 底部翻上方）。头文件即被测物，无需链接库。
+# 运行：cmake --build <build> --config Release --target candidate_geometry_test
+#       && <build>/MoqiTextService/Release/candidate_geometry_test.exe
+add_executable(candidate_geometry_test tests/candidate_geometry_test.cpp)
+add_test(NAME candidate_geometry_test COMMAND candidate_geometry_test)

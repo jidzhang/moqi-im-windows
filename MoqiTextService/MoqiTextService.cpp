@@ -18,6 +18,7 @@
 //
 
 #include "MoqiTextService.h"
+#include "CandidateClamp.h"
 #include "KeyGuardLog.h"
 #include <assert.h>
 #include <string>
@@ -163,30 +164,8 @@ void clampCandidateWindowAnchor(HWND candidateHwnd, const RECT& textRect, POINT*
 		height = windowRect.bottom - windowRect.top;
 	}
 
-	const int margin = 8;
-	if (pos->x < work.left + margin) {
-		pos->x = work.left + margin;
-	}
-	if (width > 0 && pos->x + width > work.right - margin) {
-		pos->x = work.right - margin - width;
-		if (pos->x < work.left + margin) {
-			pos->x = work.left + margin;
-		}
-	}
-	if (pos->y < work.top + margin) {
-		pos->y = work.top + margin;
-	}
-	if (height > 0 && pos->y + height > work.bottom - margin) {
-		const int above = textRect.top - margin - height;
-		if (above >= work.top + margin) {
-			pos->y = above;
-		} else {
-			pos->y = work.bottom - margin - height;
-			if (pos->y < work.top + margin) {
-				pos->y = work.top + margin;
-			}
-		}
-	}
+	// 纯几何夹取在 CandidateClamp.h（供单测）；此处只负责 Win32 取数。
+	clampCandidateWindowPos(pos, work, textRect, width, height);
 
 	std::wostringstream log;
 	log << L"[clampCandidateWindowAnchor] clamped pos=(" << pos->x << L"," << pos->y << L")"
