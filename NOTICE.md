@@ -12,6 +12,7 @@
 | 引擎 | [gaboolic/librime](https://github.com/gaboolic/librime)（源自 [rime/librime](https://github.com/rime/librime)） | BSD-3-Clause | Rime 引擎，多整句候选改版 |
 | 语法模型插件 | [lotem/librime-octagram](https://github.com/lotem/librime-octagram) | BSD-3-Clause | n-gram 语法模型 |
 | 默认词库 | [gaboolic/rime-frost](https://github.com/gaboolic/rime-frost) | GPL-3.0 | 白霜拼音词库（派生自 rime-ice） |
+| 上下文调频 | [amzxyz/rime-wanxiang](https://github.com/amzxyz/rime-wanxiang) | CC-BY-4.0 | `context_reorder.lua` 方案层移植裁剪（跨提交上下文，2026-11-05 起） |
 | 随包编辑器 | [zufuliu/notepad4](https://github.com/zufuliu/notepad4) v26.10r6392 | BSD-3-Clause | zh-Hans Win32 单文件，**以 notepad2.exe 名称分发**（用户 2026-11-03 定），菜单"打开配置文件"用；见 `vendor/notepad4/README.md` |
 | TSF 基础库 | libIME2 | LGPL-2.1 | 静态链接 |
 | 事件循环 / JSON | libuv (MIT) / jsoncpp (MIT) | MIT | 静态链接 |
