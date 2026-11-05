@@ -196,7 +196,9 @@ Copy-IfExists -Source $setupHelper -Destination (Join-Path $stageWin32Root "Setu
 
 # 2026-11-04 通用包：引擎固定 x86（单份 rime.dll），32/64 位薄 DLL 都连它。
 # 一个包装遍 32/64 位 Windows；引擎内存实测 <1GB，32 位地址空间够用。
+# 2026-11-05 daemon 转子模块：随外层仓库签出，路径从兄弟目录改仓内。
 $daemon = Resolve-ArtifactPath -Label "MoqiDaemon.exe (x86)" -Candidates @(
+    (Join-Path $RepoRoot "moqi-daemon\build-x86\Release\MoqiDaemon.exe"),
     (Join-Path $RepoRoot "..\moqi-daemon\build-x86\Release\MoqiDaemon.exe")
 )
 Copy-Item -LiteralPath $daemon -Destination (Join-Path $stageWin32Root "MoqiDaemon.exe") -Force

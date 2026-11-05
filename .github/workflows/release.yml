@@ -82,6 +82,17 @@ jobs:
             choco install innosetup --yes --no-progress
           }
 
+      - name: Build MoqiDaemon (x86)
+        working-directory: ${{ github.workspace }}/moqi-im-windows/moqi-daemon
+        run: |
+          # daemon 是外层仓库的子模块（recursive 签出已带源码）；安装包取
+          # build-x86/Release/MoqiDaemon.exe。共享引擎源来自外层仓库
+          # （CMakeLists 的 MOQI_WIN_DIR 指向 ../../）。子模块指针由外层
+          # 提交钉住，发版即引擎版本。
+          cmake -S . -B build-x86 -G "Visual Studio 17 2022" -A Win32
+          cmake --build build-x86 --config Release --target MoqiDaemon
+          if ($LASTEXITCODE -ne 0) { throw 'MoqiDaemon build failed' }
+
       - name: Cache protoc
         uses: actions/cache@v4
         with:
