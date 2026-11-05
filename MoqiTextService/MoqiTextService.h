@@ -42,6 +42,18 @@ public:
 	// 候选窗消息泵需要触发异步轮询（WM_TIMER → pollAsyncForUi）。
 	Client* client() const { return client_.get(); }
 
+	// 语言栏按钮注册表（进程级，bug#21 根因修复）：按钮 id → 按钮对象。
+	// 旧实现把这张表放在 Client 里，而同一进程里会先后/同时存在多个 Client
+	//（onActivate 的 RPC 回执建一套、ensureClientForCurrentProfile 又建一套；
+	// 切焦点时 Client 反复创建销毁）。两套按钮里 windows-mode-icon 用的是
+	// 固定系统 GUID {2C77A81E}，msctf 里同 GUID 只能有一项——后注册的把先注册
+	// 的顶掉，而两边的 map 都以为自己那套还在，于是语言栏上"只剩一个/没有"。
+	// 现在按钮归 TextService 独占：同 id 只建一次、只 AddItem 一次，Client 只更新。
+	Moqi::LangBarButton* langBarButtonForId(const std::string& id);
+	void registerLangBarButton(const std::string& id,
+	                           Ime::ComPtr<Moqi::LangBarButton> button);
+	size_t langBarButtonCount() const { return langBarButtonsById_.size(); }
+
 	virtual void onActivate();
 	virtual void onDeactivate();
 
@@ -333,6 +345,9 @@ private:
 	static void CALLBACK onCandidateFocusWatchdog(HWND hwnd, UINT msg, UINT_PTR id, DWORD time);
 
 	void updateLangButtons(); // update status of language bar buttons
+	// bug#21 现场取证：把"我们注册了哪些按钮 + msctf 侧栏项总数"打到
+	// tsf-key-guard.log，用于区分图标没加载 / 栏项没注册 / msctf 不来问。
+	void dumpLangBarState(const wchar_t* reason);
 
 	void createCandidateWindow(Ime::EditSession* session);
 	void destroyCandidateWindow();
@@ -403,6 +418,11 @@ private:
 
 	std::unique_ptr<Client> client_; // connection client
 	GUID currentLangProfile_;
+
+	// 语言栏按钮归 TextService 独占（bug#21）：见 langBarButtonForId 注释。
+	// 用 unordered_map<string, ComPtr> 保序无所谓，关键是"同 id 唯一"。
+	std::unordered_map<std::string, Ime::ComPtr<Moqi::LangBarButton>>
+	    langBarButtonsById_;
 };
 
 }

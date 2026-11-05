@@ -494,6 +494,14 @@ void TextService::onDeactivate() {
 	if(client_) {
 		closeClient();
 	}
+	// bug#21：语言栏按钮在 TextService 反激活时才彻底清空（RemoveItem+释放）。
+	// 不能早于此——Client 随焦点切换反复创建销毁，若按钮跟着 Client 走就会
+	// 被"莫名其妙"摘掉；也不能晚于此——按钮持有 ComPtr<TextService>，
+	// 不清空就成引用环，线程退出时整张图永不析构（每线程泄漏一份）。
+	// 重新激活时由 onActivate 响应里的 addButton 全套重建。
+	clearLangBarButtons();
+	langBarButtonsById_.clear();
+	appendRpcGuardLog(L"[langbar] deactivated, buttons cleared n=0");
 }
 
 // virtual
@@ -530,6 +538,7 @@ void TextService::onSetThreadFocus() {
 	    << L" pending_candidate_recovery=" << boolText(pendingCandidateRecovery_)
 	    << L" " << foregroundWindowSummary();
 	logDebug(log.str());
+	dumpLangBarState(L"onSetThreadFocus");
 	ensureClientForCurrentProfile(L"onSetThreadFocus");
 }
 
@@ -1403,6 +1412,43 @@ void CALLBACK TextService::onMessageTimeout(HWND hwnd, UINT msg, UINT_PTR id, DW
 
 
 void TextService::updateLangButtons() {
+}
+
+// bug#21 根因（2026-11-05）：语言栏按钮原先按 Client 各建一套。同一进程里
+// 会有多个 Client 先后出现（onActivate 的 RPC 回执建一套、ensureClientForProfile
+// 又建一套；切焦点时 Client 反复创建/销毁），于是同一 id 的按钮被建了多次、
+// AddItem 了多次。windows-mode-icon 用的是**固定系统 GUID** {2C77A81E}，
+// msctf 的语言栏里同一 GUID 只能有一项——后注册的把先注册的顶掉，两边的 map
+// 却都以为自己那套还在。表现就是"中英图标莫名其妙没了/只剩一个"，且每次
+// 切焦点（新建 Client）都可能换一遍，重启也躲不过。
+// 现在按钮注册表归 TextService 独占：同 id 只建一次、只 AddItem 一次，
+// 后续 Client 拿到的是同一个对象、只做状态更新。
+Moqi::LangBarButton* TextService::langBarButtonForId(const std::string& id) {
+	auto it = langBarButtonsById_.find(id);
+	return it == langBarButtonsById_.end() ? nullptr : it->second;
+}
+
+void TextService::registerLangBarButton(const std::string& id,
+                                        Ime::ComPtr<Moqi::LangBarButton> button) {
+	langBarButtonsById_[id] = std::move(button);
+}
+
+// bug#21 现场取证（2026-11-05）：语言栏图标"莫名其妙不显示"在不同机器上表现
+// 不一（本机正常、另一台必现）。真实病因有三种可能，必须能靠日志区分：
+//   ① 图标没加载成功 → [icon] load failed / GetIcon with no icon
+//   ② 按钮没在 msctf 语言栏注册表里 → 本函数显示的注册数量与 AddItem 结果
+//   ③ 按钮在注册表里但 msctf 不再来问 → 切焦点后 GetInfo/GetStatus 不再出现
+// 本函数在每次焦点切换时把"我们以为注册了哪些按钮"打出来，配合 GetInfo/
+// GetStatus 的变化日志即可把三者分开。无条件常开（默认 error 档也写）。
+void TextService::dumpLangBarState(const wchar_t* reason) {
+	std::wostringstream log;
+	log << L"[langbar] " << (reason ? reason : L"?")
+	    << L" buttons=" << langBarButtonCount()
+	    << L" client=" << boolText(client_ != nullptr)
+	    << L" activated=" << boolText(isActivated())
+	    << L" keyboard_open=" << boolText(isKeyboardOpened())
+	    << L" exe=" << processBaseName(currentProcessPath());
+	appendRpcGuardLog(log.str());
 }
 
 // 取显示器级实时 DPI（设置改完即生效），不依赖窗口消息：隐藏的候选窗收

@@ -23,7 +23,6 @@
 #include <libIME2/src/LangBarButton.h>
 #include <json/json.h>
 #include <string>
-#include <unordered_map>
 
 namespace Moqi {
 
@@ -42,9 +41,10 @@ public:
 
     void setIconFile(std::wstring filePath);
 
-	static void clearIconCache();
-
 	// ITfLangBarItemButton
+	STDMETHODIMP GetInfo(TF_LANGBARITEMINFO *pInfo);
+	STDMETHODIMP GetStatus(DWORD *pdwStatus);
+	STDMETHODIMP GetIcon(HICON *phIcon);
 	STDMETHODIMP OnClick(TfLBIClick click, POINT pt, const RECT *prcArea);
 	STDMETHODIMP InitMenu(ITfMenu *pMenu);
 
@@ -54,7 +54,23 @@ protected:
 private:
 	std::string id_;
     std::wstring iconFile_;
-	static std::unordered_map<std::wstring, HICON> iconCache_; // cache loaded icons
+	// 图标由按钮自持（bug#21，2026-11-05）：旧实现是进程级 static 缓存 +
+	// Client 反激活时 clearIconCache() 把缓存里的 HICON 全 DestroyIcon。同进程
+	// 其它线程仍在用的按钮持有同一批句柄，销毁后 GetIcon→CopyImage 失败返回
+	// NULL，语言栏上就是"中英图标不见了/只有一边显示"，且 setIconFile 因路径
+	// 未变而永不重载，进程内一击不可逆。改为每个按钮 LoadImage 一份、随按钮
+	// 析构释放（图标文件很小，去重收益不值这个坑）。
+	HICON ownedIcon_ = nullptr;
+	// 诊断（bug#21 现场取证）：msctf 每次问 GetInfo/GetStatus 的结论，内容
+	// 变化时立刻记，否则每 kInfoHeartbeatMs 记一次心跳（判断"图标消失后
+	// msctf 还问不问我们"）。
+	static constexpr ULONGLONG kInfoHeartbeatMs = 30000;
+	std::wstring lastGetInfoLine_;
+	std::wstring lastGetStatusLine_;
+	ULONGLONG lastGetInfoTick_ = 0;
+	ULONGLONG lastGetStatusTick_ = 0;
+	ULONGLONG lastGetIconTick_ = 0;
+	HRESULT lastGetIconOk_ = S_OK;
 };
 
 } // namespace Moqi

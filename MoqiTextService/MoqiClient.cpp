@@ -341,19 +341,13 @@ Client::~Client(void) {
     asyncPollTimerId_ = 0;
     asyncPollTimerWindow_ = nullptr;
   }
-  // 从 TSF 注销本实例注册的语言栏按钮，再让 map 析构释放引用：
-  // 只 Release 不 RemoveItem 的话 msctf 侧引用永不归还，每次
-  // "打字×切走"泄漏一批按钮对象（2026-10-24 mem-audit 实测定位）。
-  if (!buttons_.empty()) {
-    for (auto &item : buttons_) {
-      textService_->removeButton(item.second);
-    }
-    buttons_.clear();
-  }
+  // 语言栏按钮不再随 Client 销毁（bug#21）：按钮归 TextService 独占、跨 Client
+  // 复用。Client 只是连接层，切焦点/切方案时被销毁很正常，此时把按钮从
+  // 语言栏摘掉正是"图标莫名消失"的直接原因。按钮随 TextService 反激活
+  //（deactivateLanguageButtons）统一摘除。
   closeRpcConnection();
   localEngine_.deactivate();
   resetTextServiceState();
-  LangBarButton::clearIconCache();
 }
 
 // pack a keyEvent object into a json value
@@ -542,6 +536,10 @@ void Client::updateCommitString(Json::Value &msg, Ime::EditSession *session,
           session->context(), commitString.c_str(),
           static_cast<int>(commitString.length()),
           autoPairedSymbols ? 1 : 0);
+      // 数字直通标记：单字符 0-9 的代插置位，供紧跟的 "." 改走应用原生
+      // 插入（见 onKeyDown/filterKeyDown 的 passthrough）。
+      lastCommitWasDigit_ = commitString.size() == 1 &&
+                            commitString[0] >= L'0' && commitString[0] <= L'9';
       // FIXME: update the position of candidate and message window when the
       // composition string is changed.
       if (textService_->hasCandidateWindow()) {
@@ -568,6 +566,9 @@ void Client::updateComposition(Json::Value &msg, Ime::EditSession *session,
     if (!textService_->effectiveInlinePreedit()) {
       emptyComposition = compositionString.empty();
       if (!compositionString.empty()) {
+        // 组字开始即清除数字直通标记：组字中的 "." 交给引擎/punctuator，
+        // 不走应用原生插入（见 onKeyDown/filterKeyDown 的 passthrough）。
+        lastCommitWasDigit_ = false;
         if (!textService_->isComposing()) {
           textService_->startComposition(session->context());
         }
@@ -657,22 +658,26 @@ void Client::updateLanguageButtons(Json::Value &msg) {
   const auto &addButtonVal = msg["addButton"];
   if (addButtonVal.isArray()) {
     for (const auto &btn : addButtonVal) {
-      // 后端 onActivate 与首键建会话会各发一次 addButton（同 id）：
-      // 已注册的按钮就地更新即可，重复 AddItem 会多出一份无人释放的
-      // msctf 引用（2026-10-24 实测每次打字×切换泄漏 5 个按钮对象）。
       const std::string addId = btn["id"].asString();
-      auto existing = buttons_.find(addId);
-      if (existing != buttons_.end()) {
-        existing->second->updateFromJson(btn);
+      // bug#21 根因修复：按钮注册表在 TextService 上（进程级），不是每个
+      // Client 一份。同一进程里 Client 会反复创建（切焦点/切方案），
+      // windows-mode-icon 用固定系统 GUID，重复 AddItem 会让 msctf 里同 GUID
+      // 的项互相顶掉 → 语言栏上"中英图标莫名消失"。
+      if (auto existing = textService_->langBarButtonForId(addId)) {
+        existing->updateFromJson(btn);
         continue;
       }
       auto langBtn = Ime::ComPtr<Moqi::LangBarButton>::takeover(
           Moqi::LangBarButton::fromJson(textService_, btn));
       if (langBtn != nullptr) {
-        buttons_.emplace(addId, langBtn); // insert into the map
-        textService_->addButton(langBtn);
+        // AddItem 失败=按钮在本线程语言栏上根本不出现（图标"丢了"的一种
+        // 可能），无条件留痕，方便现场只凭日志定位。
+        const HRESULT addHr = textService_->addButton(langBtn);
         appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
-                          L" added to TSF");
+                          (SUCCEEDED(addHr) ? L" added to TSF hr="
+                                            : L" FAILED to TSF hr=") +
+                          std::to_wstring(static_cast<long>(addHr)));
+        textService_->registerLangBarButton(addId, langBtn);
       } else {
         appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
                           L" fromJson returned NULL");
@@ -682,27 +687,32 @@ void Client::updateLanguageButtons(Json::Value &msg) {
 
   const auto &removeButtonVal = msg["removeButton"];
   if (removeButtonVal.isArray()) {
-    // FIXME: handle windows-mode-icon
     for (const auto &btn : removeButtonVal) {
       if (btn.isString()) {
         string id = btn.asString();
-        auto map_it = buttons_.find(id);
-        if (map_it != buttons_.end()) {
-          textService_->removeButton(map_it->second);
-          buttons_.erase(map_it); // remove from the map
+        if (auto existing = textService_->langBarButtonForId(id)) {
+          textService_->removeButton(existing);
+          textService_->registerLangBarButton(id, nullptr);
         }
       }
     }
   }
   const auto &changeButtonVal = msg["changeButton"];
   if (changeButtonVal.isArray()) {
-    // FIXME: handle windows-mode-icon
     for (const auto &btn : changeButtonVal) {
       if (btn.isObject()) {
         string id = btn["id"].asString();
-        auto map_it = buttons_.find(id);
-        if (map_it != buttons_.end()) {
-          map_it->second->updateFromJson(btn);
+        if (auto existing = textService_->langBarButtonForId(id)) {
+          existing->updateFromJson(btn);
+          // bug#21 取证：图标刷新走没走到（切换中英/全半角时必有一条）。
+          // 若用户切了中英却看不到这条，说明后端根本没下发 changeButton。
+          appendRpcGuardLog(L"[langbar] changeButton id=" +
+                            utf8ToUtf16(id.c_str()) + L" icon=" +
+                            utf8ToUtf16(btn["icon"].asString().c_str()));
+        } else {
+          // 后端让我们改一个本进程没有的按钮：典型是激活时 addButton 丢了。
+          appendRpcGuardLog(L"[langbar] changeButton for unknown id=" +
+                            utf8ToUtf16(id.c_str()));
         }
       }
     }
@@ -950,6 +960,14 @@ void Client::onActivate() {
   activationInProgress_.store(false, std::memory_order_release);
   isActivated_ = true;
   connectAttempts_ = MAX_CONNECT_ATTEMPTS;
+  // bug#21 现场取证：激活后记录进程级按钮注册表（按钮归 TextService 独占，
+  // 不再随 Client 创建/销毁）。同一 id 只会有一条，可据此确认没有重复注册。
+  {
+    std::wostringstream log;
+    log << L"[langbar] onActivate buttons="
+        << (textService_ ? textService_->langBarButtonCount() : 0);
+    appendRpcGuardLog(log.str());
+  }
   // 2026-11-01 键盘开关自愈（每进程一次）：关闭态会持久化到输入配置，
   // 新进程继承后按键不进入本服务（直出英文）。风暴根因（openKeyboard:false
   // 逐响应关键盘）已修，单次校正不会再触发翻转循环。
@@ -972,10 +990,13 @@ void Client::onDeactivate() {
   // Fire-and-forget: never block the app's TSF thread waiting for a reply to
   // a notification (e.g. when the backend is hung at boot).
   sendRpcNoWait("onDeactivate");
+  // bug#21 现场取证：反激活时记录进程级按钮数（此时按钮还在，由
+  // TextService::deactivateLanguageButtons 统一摘除）。
+  appendRpcGuardLog(L"[langbar] onDeactivate client_buttons=" +
+                    std::to_wstring(textService_ ? textService_->langBarButtonCount() : 0));
   const bool userDictDirty =
       localEngine_.active() && localEngine_.consumeUserDictDirty();
   localEngine_.deactivate();
-  LangBarButton::clearIconCache();
   isActivated_ = false;
   if (userDictDirty) {
     // 真反激活：会话已销毁=安全窗口，后台导出学习快照（无组字可查）。
@@ -1050,6 +1071,21 @@ bool Client::waitForRpcIdleForFirstKey() const {
 }
 
 bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
+  // 数字直通后紧跟的 "."：不放引擎，直接放行给应用原生插入半角点。
+  // （Word 2016 的自动编号窗口期会丢掉紧随数字提交的第二次 IME 代插，
+  // 2026-11-05 用户实报；微软/谷歌的数字本就是键盘放行所以免疫。）
+  const bool isPeriodKey = keyEvent.keyCode() == VK_OEM_PERIOD ||
+                           keyEvent.keyCode() == VK_DECIMAL;
+  if (isPeriodKey && lastCommitWasDigit_ && !cloudClipRpcMode_) {
+    lastCommitWasDigit_ = false;
+    digitPeriodPassthroughPending_ = true;
+    appendRpcGuardLog(L"[filterKeyDown] digit-period passthrough to app vk=" +
+                      std::to_wstring(keyEvent.keyCode()));
+    return false;
+  }
+  if (!isPeriodKey) {
+    lastCommitWasDigit_ = false;
+  }
   // 阶段1：进程内引擎优先；接管点要求无组字/无候选/无在途异步响应。
   // 云剪贴板列表激活期间走 RPC（本地引擎会吃掉选字键刷掉列表）。
   // 引擎还在首次部署（全新用户目录 1.5-5 秒）时，可打印键先等它就绪再判：
@@ -1150,6 +1186,15 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
 }
 
 bool Client::onKeyDown(Ime::KeyEvent &keyEvent, Ime::EditSession *session) {
+  // 与 filterKeyDown 同判（放行两阶段必须一致，否则宿主已按"不吃"跳过
+  // 原生插入、这里 daemon 的 lastKeyDownRet_ 残留会把句点重新吃掉）。
+  if (digitPeriodPassthroughPending_) {
+    digitPeriodPassthroughPending_ = false;
+    if ((keyEvent.keyCode() == VK_OEM_PERIOD ||
+         keyEvent.keyCode() == VK_DECIMAL) && !cloudClipRpcMode_) {
+      return false;
+    }
+  }
   if (localEngine_.active() && !cloudClipRpcMode_) {
     Json::Value ret;
     if (localEngine_.onKeyDown(keyEvent, ret)) {
@@ -2326,18 +2371,9 @@ void Client::resetTextServiceState() {
   // we lost connection while being activated previously
   // re-initialize the whole text service.
 
-  // cleanup for the previous instance.
-  // remove all buttons
-
-  // some language bar buttons are not unregistered properly
-  if (!buttons_.empty()) {
-    appendRpcGuardLog(L"[reset] removing buttons n=" +
-                      std::to_wstring(buttons_.size()));
-    for (auto &item : buttons_) {
-      textService_->removeButton(item.second);
-    }
-    buttons_.clear();
-  }
+  // 语言栏按钮不在这里清（bug#21）：按钮归 TextService 独占、跨 Client 复用。
+  // 以前这里会 RemoveItem 全部按钮，而 resetTextServiceState 在每次
+  // closeRpcConnection/断线重连时都会跑——语言栏图标于是"莫名其妙消失"。
   autoPairRules_ = defaultAutoPairRules();
 }
 

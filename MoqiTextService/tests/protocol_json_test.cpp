@@ -133,6 +133,18 @@ int main() {
     check(patch.hasTooltip, "button: real tooltip applied");
   }
 
+  // 5b) daemon 探不到图标目录时整个 icon 字段缺席（bug#21：绝不发不存在
+  //     的绝对路径）——缺席/空串=未指定，不得当作"清空图标"。
+  {
+    const ButtonPatch noIcon = parseButtonPatch(parse(
+        "{\"id\":\"windows-mode-icon\",\"text\":\"\","
+        "\"tooltip\":\"t\",\"commandId\":1}"));
+    check(!noIcon.hasIcon, "button: absent icon field stays unset");
+    const ButtonPatch emptyIcon = parseButtonPatch(
+        parse("{\"id\":\"windows-mode-icon\",\"icon\":\"\"}"));
+    check(!emptyIcon.hasIcon, "button: empty icon string stays unset");
+  }
+
   // 6) Type-name mapping, including the symbolic proto enum names.
   {
     const ButtonPatch menuPatch = parseButtonPatch(

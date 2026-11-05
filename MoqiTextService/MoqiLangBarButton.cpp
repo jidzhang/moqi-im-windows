@@ -21,6 +21,7 @@
 #include "MoqiLangBarButton.h"
 #include "MoqiTextService.h"
 #include "JsonCompat.h"
+#include "KeyGuardLog.h"
 #include "libIME2/src/Utils.h"
 
 // this is the GUID of the IME mode icon in Windows 8
@@ -32,15 +33,17 @@ static const char WINDOWS_MODE_ICON_ID[] = "windows-mode-icon";
 
 namespace Moqi {
 
-// static
-std::unordered_map<std::wstring, HICON> LangBarButton::iconCache_; // cache loaded icons
-
 LangBarButton::LangBarButton(TextService* service, const std::string& id, const GUID& guid, UINT commandId, const wchar_t* text, DWORD style):
 	Ime::LangBarButton(service, guid, commandId, text, style),
 	id_(id) {
 }
 
 LangBarButton::~LangBarButton() {
+	// 图标归本按钮所有（GetIcon 交给语言栏的是 CopyImage 副本），随对象释放。
+	if (ownedIcon_ != nullptr) {
+		::DestroyIcon(ownedIcon_);
+		ownedIcon_ = nullptr;
+	}
 }
 
 LangBarButton* LangBarButton::fromJson(TextService* service, const Json::Value& info) {
@@ -71,22 +74,26 @@ LangBarButton* LangBarButton::fromJson(TextService* service, const Json::Value& 
 }
 
 void LangBarButton::setIconFile(std::wstring filePath) {
-    if (filePath != iconFile_) {
-        iconFile_ = std::move(filePath);
+	// 路径相同也要在"当前没有图标"时重试：加载失败一次之后必须能恢复。
+	if (filePath == iconFile_ && icon() != nullptr) {
+		return;
+	}
+	iconFile_ = std::move(filePath);
 
-        HICON icon = NULL;
-        auto icon_it = iconCache_.find(iconFile_);
-        if (icon_it != iconCache_.end()) { // found in the cache
-            icon = icon_it->second;
-        }
-        else { // not in the cache
-            icon = (HICON)LoadImageW(NULL, iconFile_.c_str(), IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR | LR_LOADFROMFILE);
-            iconCache_[iconFile_] = icon; // cache the icon
-        }
-        if (icon) {
-            setIcon(icon);
-        }
-    }
+	HICON icon = (HICON)LoadImageW(NULL, iconFile_.c_str(), IMAGE_ICON, 0, 0,
+	                               LR_DEFAULTCOLOR | LR_LOADFROMFILE);
+	if (icon == nullptr) {
+		// 保留旧图标：语言栏上宁可显示上一张（可能状态差一档），也不留空按钮。
+		appendRpcGuardLog(L"[icon] load failed id=" + utf8ToUtf16(id_.c_str()) +
+		                 L" path=" + iconFile_ + L" err=" +
+		                 std::to_wstring(::GetLastError()));
+		return;
+	}
+	if (ownedIcon_ != nullptr) {
+		::DestroyIcon(ownedIcon_);
+	}
+	ownedIcon_ = icon;
+	setIcon(icon);
 }
 
 void LangBarButton::updateFromJson(const Json::Value& info) {
@@ -135,11 +142,75 @@ void LangBarButton::updateFromJson(const Json::Value& info) {
 }
 
 
-void LangBarButton::clearIconCache() {
-	for (auto it = iconCache_.begin(); it != iconCache_.end(); ++it) {
-		DestroyIcon(it->second);
+// 语言栏每次重绘都会来取图标。这里为空说明图标没加载成功（或句柄已失效），
+// 记一条无条件日志——现场"中英图标不见了"时靠它区分是图标问题还是栏项丢失。
+// 成功路径也记心跳：问题机上"图标消失后 GetIcon 还来不来"是关键证据
+// （来=msctf 想要图标但拿到空/失效句柄；不来=按钮已不在语言栏上）。
+STDMETHODIMP LangBarButton::GetIcon(HICON *phIcon) {
+	const ULONGLONG now = ::GetTickCount64();
+	if (icon() == nullptr) {
+		appendRpcGuardLog(L"[icon] GetIcon with no icon id=" +
+		                  utf8ToUtf16(id_.c_str()) + L" path=" + iconFile_);
+		*phIcon = nullptr;
+		return E_FAIL;
 	}
-	iconCache_.clear();
+	const HRESULT hr = Ime::LangBarButton::GetIcon(phIcon);
+	if (now - lastGetIconTick_ >= kInfoHeartbeatMs ||
+	    (hr != S_OK) != (lastGetIconOk_ != S_OK)) {
+		lastGetIconTick_ = now;
+		lastGetIconOk_ = hr;
+		appendRpcGuardLog(L"[icon] GetIcon id=" + utf8ToUtf16(id_.c_str()) +
+		                  L" hr=" + std::to_wstring(static_cast<long>(hr)) +
+		                  L" hicon_null=" + (phIcon && *phIcon ? L"0" : L"1"));
+	}
+	return hr;
+}
+
+// msctf 会反复来问"你是谁、什么状态"。现场"图标不显示"时，这两条是唯一
+// 能证明"按钮还活着且被 msctf 认账"的证据：如果切焦点后 GetInfo 不再被调用，
+// 说明按钮已从 msctf 的语言栏注册表里掉了（不是图标问题）。
+// 心跳：内容不变时每 kInfoHeartbeatMs 记一次，用于判断"图标消失后 msctf
+// 到底还问不问我们"——只记变化的话，问题机上会完全静默，分不清是"没问"
+// 还是"问了但内容没变"。
+STDMETHODIMP LangBarButton::GetInfo(TF_LANGBARITEMINFO *pInfo) {
+	const HRESULT hr = Ime::LangBarButton::GetInfo(pInfo);
+	if (pInfo != nullptr) {
+		// 记录 guidItem 前 8 位、样式位、描述长度。样式位被洗成 0 会导致
+		// 按钮不显示；desc 为空会让 Windows 10 暂时隐藏按钮。
+		wchar_t guidText[40] = {};
+		swprintf_s(guidText, L"{%08lX}", static_cast<unsigned long>(pInfo->guidItem.Data1));
+		wchar_t styleText[16] = {};
+		swprintf_s(styleText, L"0x%lx", static_cast<unsigned long>(pInfo->dwStyle));
+		const std::wstring line = L"[icon] GetInfo id=" +
+		                          utf8ToUtf16(id_.c_str()) + L" guid=" + guidText +
+		                          L" style=" + styleText +
+		                          L" desc_len=" + std::to_wstring(wcslen(pInfo->szDescription)) +
+		                          L" hr=" + std::to_wstring(static_cast<long>(hr));
+		const ULONGLONG now = ::GetTickCount64();
+		if (line != lastGetInfoLine_ || now - lastGetInfoTick_ >= kInfoHeartbeatMs) {
+			lastGetInfoLine_ = line;
+			lastGetInfoTick_ = now;
+			appendRpcGuardLog(line);
+		}
+	}
+	return hr;
+}
+
+STDMETHODIMP LangBarButton::GetStatus(DWORD *pdwStatus) {
+	const HRESULT hr = Ime::LangBarButton::GetStatus(pdwStatus);
+	if (pdwStatus != nullptr) {
+		wchar_t statusText[16] = {};
+		swprintf_s(statusText, L"0x%lx", static_cast<unsigned long>(*pdwStatus));
+		const std::wstring line = L"[icon] GetStatus id=" +
+		                          utf8ToUtf16(id_.c_str()) + L" status=" + statusText;
+		const ULONGLONG now = ::GetTickCount64();
+		if (line != lastGetStatusLine_ || now - lastGetStatusTick_ >= kInfoHeartbeatMs) {
+			lastGetStatusLine_ = line;
+			lastGetStatusTick_ = now;
+			appendRpcGuardLog(line);
+		}
+	}
+	return hr;
 }
 
 STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT *prcArea) {

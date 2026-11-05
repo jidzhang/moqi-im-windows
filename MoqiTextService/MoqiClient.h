@@ -169,7 +169,6 @@ private:
 	HANDLE pipe_;
 	std::atomic<int> rpcInProgress_;
 	std::atomic<bool> activationInProgress_;
-	std::unordered_map<std::string, Ime::ComPtr<Moqi::LangBarButton>> buttons_; // map buttons to string IDs
 	unsigned int nextSeqNum_;
 	bool isActivated_;
     bool shouldWaitConnection_;
@@ -192,6 +191,15 @@ private:
 	// "option" 字段）。
 	Json::Value lastMenuItems_{Json::arrayValue};
 	std::atomic<bool> userDbExportInFlight_{false};
+	// 最近一次代插的提交文本是否为单个数字（数字直通）。数字后紧跟的 "."
+	// 直接放行给应用原生插入：Word 2016 的自动编号窗口期会丢掉紧随数字
+	// 提交之后的第二次 IME 代插（2026-11-05 用户实报，微软/谷歌为键盘
+	// 放行所以免疫；记事本/WPS 宽容不受影响）。
+	bool lastCommitWasDigit_ = false;
+	// filterKeyDown 已放行 "." 给应用后置位；TSF 的 OnKeyDown 阶段对同一
+	// 键必须继续返回"不吃"，否则 daemon 的 lastKeyDownRet_ 残留会把句点
+	// 重新吃掉（放行两阶段必须一致）。
+	bool digitPeriodPassthroughPending_ = false;
 	ULONGLONG lastUserDbExportTick_ = 0;
 };
 
