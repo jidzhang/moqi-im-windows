@@ -671,12 +671,17 @@ void Client::updateLanguageButtons(Json::Value &msg) {
           Moqi::LangBarButton::fromJson(textService_, btn));
       if (langBtn != nullptr) {
         // AddItem 失败=按钮在本线程语言栏上根本不出现（图标"丢了"的一种
-        // 可能），无条件留痕，方便现场只凭日志定位。
+        // 可能），无条件留痕；成功走 trace（常规路径，error 档不落）。
         const HRESULT addHr = textService_->addButton(langBtn);
-        appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
-                          (SUCCEEDED(addHr) ? L" added to TSF hr="
-                                            : L" FAILED to TSF hr=") +
-                          std::to_wstring(static_cast<long>(addHr)));
+        if (SUCCEEDED(addHr)) {
+          appendRpcTraceLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
+                            L" added to TSF hr=" +
+                            std::to_wstring(static_cast<long>(addHr)));
+        } else {
+          appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
+                            L" FAILED to TSF hr=" +
+                            std::to_wstring(static_cast<long>(addHr)));
+        }
         textService_->registerLangBarButton(addId, langBtn);
       } else {
         appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
@@ -704,9 +709,8 @@ void Client::updateLanguageButtons(Json::Value &msg) {
         string id = btn["id"].asString();
         if (auto existing = textService_->langBarButtonForId(id)) {
           existing->updateFromJson(btn);
-          // bug#21 取证：图标刷新走没走到（切换中英/全半角时必有一条）。
-          // 若用户切了中英却看不到这条，说明后端根本没下发 changeButton。
-          appendRpcGuardLog(L"[langbar] changeButton id=" +
+          // bug#21 取证（trace 档）：图标刷新走没走到。常规路径不进 error 档。
+          appendRpcTraceLog(L"[langbar] changeButton id=" +
                             utf8ToUtf16(id.c_str()) + L" icon=" +
                             utf8ToUtf16(btn["icon"].asString().c_str()));
         } else {
@@ -765,7 +769,7 @@ void Client::updateStatus(Json::Value &msg, Ime::EditSession *session,
   // 此前只有 applyAsyncResponse 处理，导致进入转发模式后永远退不回来。
   if (msg.isMember("cloudClip")) {
     cloudClipRpcMode_ = msg["cloudClip"].asBool();
-    appendRpcGuardLog(L"[cloudclip] rpc mode " +
+    appendRpcTraceLog(L"[cloudclip] rpc mode " +
                       std::wstring(cloudClipRpcMode_ ? L"ON" : L"OFF"));
   }
   // 2026-11-02 审计结论：protojson EmitUnpopulated 让隐式零值字段出现在每条
@@ -960,13 +964,13 @@ void Client::onActivate() {
   activationInProgress_.store(false, std::memory_order_release);
   isActivated_ = true;
   connectAttempts_ = MAX_CONNECT_ATTEMPTS;
-  // bug#21 现场取证：激活后记录进程级按钮注册表（按钮归 TextService 独占，
-  // 不再随 Client 创建/销毁）。同一 id 只会有一条，可据此确认没有重复注册。
+  // bug#21 现场取证（trace 档）：激活后记录进程级按钮注册表（按钮归
+  // TextService 独占，不再随 Client 创建/销毁）。
   {
     std::wostringstream log;
     log << L"[langbar] onActivate buttons="
         << (textService_ ? textService_->langBarButtonCount() : 0);
-    appendRpcGuardLog(log.str());
+    appendRpcTraceLog(log.str());
   }
   // 2026-11-01 键盘开关自愈（每进程一次）：关闭态会持久化到输入配置，
   // 新进程继承后按键不进入本服务（直出英文）。风暴根因（openKeyboard:false
@@ -990,9 +994,8 @@ void Client::onDeactivate() {
   // Fire-and-forget: never block the app's TSF thread waiting for a reply to
   // a notification (e.g. when the backend is hung at boot).
   sendRpcNoWait("onDeactivate");
-  // bug#21 现场取证：反激活时记录进程级按钮数（此时按钮还在，由
-  // TextService::deactivateLanguageButtons 统一摘除）。
-  appendRpcGuardLog(L"[langbar] onDeactivate client_buttons=" +
+  // bug#21 取证（trace）：反激活时记录按钮数（常规路径，error 不落）。
+  appendRpcTraceLog(L"[langbar] onDeactivate client_buttons=" +
                     std::to_wstring(textService_ ? textService_->langBarButtonCount() : 0));
   const bool userDictDirty =
       localEngine_.active() && localEngine_.consumeUserDictDirty();
@@ -1079,7 +1082,7 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
   if (isPeriodKey && lastCommitWasDigit_ && !cloudClipRpcMode_) {
     lastCommitWasDigit_ = false;
     digitPeriodPassthroughPending_ = true;
-    appendRpcGuardLog(L"[filterKeyDown] digit-period passthrough to app vk=" +
+    appendRpcTraceLog(L"[filterKeyDown] digit-period passthrough to app vk=" +
                       std::to_wstring(keyEvent.keyCode()));
     return false;
   }
@@ -1134,7 +1137,7 @@ bool Client::filterKeyDown(Ime::KeyEvent &keyEvent) {
         // 结果经推送帧回来，候选窗 WM_TIMER 轮询取回（见 applyAsyncResponse）。
         refreshAsyncPollTimer();
       }
-      appendRpcGuardLog(L"[filterKeyDown] chord -> daemon vk=" +
+      appendRpcTraceLog(L"[filterKeyDown] chord -> daemon vk=" +
                         std::to_wstring(keyEvent.keyCode()) +
                         (aiConsumed ? L" ai=consumed" : L" ai=passed"));
       return aiConsumed;
@@ -1354,7 +1357,7 @@ bool Client::onPreservedKey(const GUID &guid, Ime::EditSession *session) {
 }
 
 bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
-  appendRpcGuardLog(L"[onCommand] id=" + std::to_wstring(id) +
+  appendRpcTraceLog(L"[onCommand] id=" + std::to_wstring(id) +
                     L" type=" + std::to_wstring(static_cast<int>(type)) +
                     L" local=" + (localEngine_.active() ? L"1" : L"0"));
   // 本地引擎接管时，改引擎状态的命令必须在本地执行（后端切换的是它自己
@@ -1421,7 +1424,7 @@ bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
 }
 
 bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
-  appendRpcGuardLog(L"[onMenu] button=" + utf8ToUtf16(button_id.c_str()) +
+  appendRpcTraceLog(L"[onMenu] button=" + utf8ToUtf16(button_id.c_str()) +
                     L" wait=" + std::to_wstring(shouldWaitConnection_ ? 1 : 0) +
                     L" pipe=" +
                     std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
@@ -1429,9 +1432,11 @@ bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
   req["buttonId"] = button_id;
 
   const bool rpcOk = callRpcMethod(req, result);
-  appendRpcGuardLog(L"[onMenuRpc] ok=" + std::to_wstring(rpcOk ? 1 : 0) +
-                    L" pipe=" +
-                    std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
+  if (!rpcOk) {
+    // RPC 失败=真异常（error 档留痕）；成功路径的菜单内容走 trace。
+    appendRpcGuardLog(L"[onMenuRpc] FAILED pipe=" +
+                      std::to_wstring(pipe_ != INVALID_HANDLE_VALUE ? 1 : 0));
+  }
   {
     const Json::Value& mi = result["menuItems"];
     if (mi.isArray()) {
@@ -1450,7 +1455,7 @@ bool Client::sendOnMenu(std::string button_id, Json::Value &result) {
         ++shown;
       }
     }
-    appendRpcGuardLog(dump);
+    appendRpcTraceLog(dump);
   }
   if (handleRpcResponse(result, nullptr, false)) {
     return true;
@@ -1634,12 +1639,11 @@ void Client::refreshAsyncPollTimer() {
                    ASYNC_RPC_POLL_INTERVAL_MS, nullptr);
     asyncPollTimerWindow_ = asyncPollTimerId_ != 0 ? targetWindow : nullptr;
     const DWORD err = asyncPollTimerId_ == 0 ? ::GetLastError() : 0;
-    appendRpcGuardLog(L"[pollTimer] set hwnd=0x" +
+    // AI 结果轮询设置：常规路径走 trace（error 档不落）。
+    appendRpcTraceLog(L"[pollTimer] set hwnd=0x" +
                       std::to_wstring(reinterpret_cast<UINT_PTR>(targetWindow)) +
                       L" id=" + std::to_wstring(asyncPollTimerId_) +
                       L" gle=" + std::to_wstring(err));
-  } else if (targetWindow == nullptr) {
-    appendRpcGuardLog(L"[pollTimer] no candidate window; timer not set");
   }
 }
 
@@ -1688,7 +1692,7 @@ bool Client::applyAsyncResponse(Json::Value &msg, Ime::EditSession *session) {
   // 本地引擎不处理——否则 rime 吃掉选字键刷掉列表）。
   if (msg.isMember("cloudClip")) {
     cloudClipRpcMode_ = msg["cloudClip"].asBool();
-    appendRpcGuardLog(L"[cloudclip] rpc mode " +
+    appendRpcTraceLog(L"[cloudclip] rpc mode " +
                       std::wstring(cloudClipRpcMode_ ? L"ON" : L"OFF"));
   }
   if (localEngine_.active() && msg.get("aiOverlay", false).asBool()) {

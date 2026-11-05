@@ -542,6 +542,7 @@ void TextService::onSetThreadFocus() {
 	ensureClientForCurrentProfile(L"onSetThreadFocus");
 }
 
+
 // virtual
 void TextService::onKillThreadFocus() {
 	std::wostringstream log;
@@ -1439,7 +1440,8 @@ void TextService::registerLangBarButton(const std::string& id,
 //   ② 按钮没在 msctf 语言栏注册表里 → 本函数显示的注册数量与 AddItem 结果
 //   ③ 按钮在注册表里但 msctf 不再来问 → 切焦点后 GetInfo/GetStatus 不再出现
 // 本函数在每次焦点切换时把"我们以为注册了哪些按钮"打出来，配合 GetInfo/
-// GetStatus 的变化日志即可把三者分开。无条件常开（默认 error 档也写）。
+// GetStatus 的变化日志即可把三者分开。trace 档（常规焦点切换频率高，
+// error 档不落——用户 2026-11-05 反馈日志不受控）。
 void TextService::dumpLangBarState(const wchar_t* reason) {
 	std::wostringstream log;
 	log << L"[langbar] " << (reason ? reason : L"?")
@@ -1448,7 +1450,7 @@ void TextService::dumpLangBarState(const wchar_t* reason) {
 	    << L" activated=" << boolText(isActivated())
 	    << L" keyboard_open=" << boolText(isKeyboardOpened())
 	    << L" exe=" << processBaseName(currentProcessPath());
-	appendRpcGuardLog(log.str());
+	appendRpcTraceLog(log.str());
 }
 
 // 取显示器级实时 DPI（设置改完即生效），不依赖窗口消息：隐藏的候选窗收

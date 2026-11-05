@@ -4,6 +4,7 @@
 //	per-key semantics still mirror the Go backend hot path.
 //
 #include "RimeCore.h"
+#include "LocalBehaviorPatch.h"
 
 #include <ShlObj.h>
 #include <algorithm>
@@ -408,54 +409,19 @@ string buildLocalBehaviorPatch(const wstring& sharedDataDir) {
       }
     }
   }
-  string body = "# managed by moqi local engine\npatch:\n";
-  int lines = 0;
-  auto emit = [&](const string& line) {
-    body += "  " + line + "\n";
-    ++lines;
-  };
-  if (jsonBool(cfg, "disable_slash_punct")) {
-    emit("recognizer/patterns/punct: null");
-  } else if (jsonBool(cfg, "slash_punct_v_only")) {
-    emit("recognizer/patterns/punct: \"^v([0-9]|10|[A-Za-z]+)$\"");
-  }
-  if (jsonBool(cfg, "disable_unicode_trigger")) {
-    emit("recognizer/patterns/unicode: null");
-  }
-  if (jsonBool(cfg, "disable_number_trigger")) {
-    emit("recognizer/patterns/number: null");
-  }
-  if (jsonBool(cfg, "disable_lunar_trigger")) {
-    emit("recognizer/patterns/gregorian_to_lunar: null");
-  }
-  if (jsonBool(cfg, "disable_calculator")) {
-    emit("recognizer/patterns/calculator: null");
-  }
-  if (jsonBool(cfg, "disable_aux_lookup")) {
-    emit("engine/translators/-: table_translator@frost_aux");
-    emit("engine/filters/-: lua_filter@*aux_lookup_filter");
-  }
-  // MixedPair 默认开（Go defaultBigramRerankConfig）；关闭时不再禁用学习。
-  bool rerankMixed = true;
+  Json::Value contextual;
   {
-    Json::Value contextual;
     ifstream in(moqiAppDataDir() + L"\\contextual_config.json", ios::binary);
     if (in) {
       Json::CharReaderBuilder builder;
       string errs;
-      if (Json::parseFromStream(builder, in, &contextual, &errs)) {
-        const Json::Value& br = contextual["bigram_rerank"];
-        if (br.isObject() && br["mixed_pair"].isBool()) {
-          rerankMixed = br["mixed_pair"].asBool();
-        }
-      }
+      // 解析失败=按默认（MixedPair 开）走，与旧内联实现一致。
+      Json::parseFromStream(builder, in, &contextual, &errs);
     }
   }
-  if (rerankMixed) {
-    emit("translator/disable_user_dict_for_patterns: "
-         "[\".*[bcdfhjklmpqstvwxyz]$\"]");
-  }
 
+  // 语法模型语言解析（文件 IO + 文件系统扫描留在这里；输出体生成在
+  // LocalBehaviorPatch.h，可单测——10-26 配置脱节事故的回归锚）。
   string setting = jsonString(cfg, "grammar_model");
   string lang;
   if (setting.empty() || setting == "auto" || setting == "AUTO") {
@@ -477,38 +443,7 @@ string buildLocalBehaviorPatch(const wstring& sharedDataDir) {
       lang = setting;
     }
   }
-  if (!lang.empty()) {
-    emit("grammar/language: " + lang);
-    emit("translator/contextual_suggestions: true");
-    // 手填罚分优先；否则按出厂模型给 -4（wanxiang 本地模型为 0）。
-    double penalty = -4;
-    const Json::Value& pv = cfg["grammar_penalty"];
-    if (pv.isNumeric()) {
-      penalty = pv.asDouble();
-      if (penalty < -20 || penalty > 0) penalty = -4;
-    } else if (lang.find("wanxiang") != string::npos) {
-      penalty = 0;
-    }
-    char buf[64];
-    snprintf(buf, sizeof(buf), "grammar/non_collocation_penalty: %g", penalty);
-    emit(buf);
-    emit("melt_eng/initial_quality: 0.01");
-    emit("reduce_english_filter/mode: all");
-    emit("translator/sentence_quality_boost: -2");
-    emit("translator/enable_transpose: true");
-    emit("translator/transpose_credibility: -8");
-    emit("translator/enable_deletion: true");
-    emit("translator/deletion_credibility: -8");
-    emit("translator/enable_substitution: true");
-    emit("translator/substitution_credibility: -8");
-    emit("translator/enable_insertion: true");
-    emit("translator/insertion_credibility: -8");
-    emit("translator/typo_second_pass: true");
-    emit("translator/typo_second_pass_max_input_length: 12");
-    emit("translator/typo_second_pass_insert_after: 5");
-  }
-  if (lines == 0) return "";
-  return body;
+  return buildLocalBehaviorPatchBody(cfg, contextual, lang);
 }
 }  // namespace
 

@@ -144,8 +144,9 @@ void LangBarButton::updateFromJson(const Json::Value& info) {
 
 // 语言栏每次重绘都会来取图标。这里为空说明图标没加载成功（或句柄已失效），
 // 记一条无条件日志——现场"中英图标不见了"时靠它区分是图标问题还是栏项丢失。
-// 成功路径也记心跳：问题机上"图标消失后 GetIcon 还来不来"是关键证据
-// （来=msctf 想要图标但拿到空/失效句柄；不来=按钮已不在语言栏上）。
+// 成功路径只在 trace 档记心跳（bug#21 现场取证口径：图标消失后 GetIcon
+// 还来不来是关键证据），避免默认 error 档被常规重绘刷屏（用户 2026-11-05
+// 反馈"默认 error 都会生成很多日志，不受控"）。
 STDMETHODIMP LangBarButton::GetIcon(HICON *phIcon) {
 	const ULONGLONG now = ::GetTickCount64();
 	if (icon() == nullptr) {
@@ -159,19 +160,16 @@ STDMETHODIMP LangBarButton::GetIcon(HICON *phIcon) {
 	    (hr != S_OK) != (lastGetIconOk_ != S_OK)) {
 		lastGetIconTick_ = now;
 		lastGetIconOk_ = hr;
-		appendRpcGuardLog(L"[icon] GetIcon id=" + utf8ToUtf16(id_.c_str()) +
+		appendRpcTraceLog(L"[icon] GetIcon id=" + utf8ToUtf16(id_.c_str()) +
 		                  L" hr=" + std::to_wstring(static_cast<long>(hr)) +
 		                  L" hicon_null=" + (phIcon && *phIcon ? L"0" : L"1"));
 	}
 	return hr;
 }
 
-// msctf 会反复来问"你是谁、什么状态"。现场"图标不显示"时，这两条是唯一
-// 能证明"按钮还活着且被 msctf 认账"的证据：如果切焦点后 GetInfo 不再被调用，
-// 说明按钮已从 msctf 的语言栏注册表里掉了（不是图标问题）。
-// 心跳：内容不变时每 kInfoHeartbeatMs 记一次，用于判断"图标消失后 msctf
-// 到底还问不问我们"——只记变化的话，问题机上会完全静默，分不清是"没问"
-// 还是"问了但内容没变"。
+// msctf 会反复来问"你是谁、什么状态"。现场"图标不显示"时，这两条是
+// 定位证据（切焦点后不再被问=按钮掉了；仍被问=msctf 在画但不显示）。
+// 全部走 trace 档：常规重绘频率高，无条件写会淹没 key-guard（用户反馈）。
 STDMETHODIMP LangBarButton::GetInfo(TF_LANGBARITEMINFO *pInfo) {
 	const HRESULT hr = Ime::LangBarButton::GetInfo(pInfo);
 	if (pInfo != nullptr) {
@@ -190,7 +188,7 @@ STDMETHODIMP LangBarButton::GetInfo(TF_LANGBARITEMINFO *pInfo) {
 		if (line != lastGetInfoLine_ || now - lastGetInfoTick_ >= kInfoHeartbeatMs) {
 			lastGetInfoLine_ = line;
 			lastGetInfoTick_ = now;
-			appendRpcGuardLog(line);
+			appendRpcTraceLog(line);
 		}
 	}
 	return hr;
@@ -207,7 +205,7 @@ STDMETHODIMP LangBarButton::GetStatus(DWORD *pdwStatus) {
 		if (line != lastGetStatusLine_ || now - lastGetStatusTick_ >= kInfoHeartbeatMs) {
 			lastGetStatusLine_ = line;
 			lastGetStatusTick_ = now;
-			appendRpcGuardLog(line);
+			appendRpcTraceLog(line);
 		}
 	}
 	return hr;
