@@ -203,6 +203,18 @@ std::wstring currentSchemeSetDirName();
 
 std::string readFileUtf8(const std::wstring& path);
 void writeFileUtf8(const std::wstring& path, const std::string& content);
+
+// jsoncpp 安全取值（2026-11-06 可执行实证）：get/operator[] 在数组、标量
+// 容器上抛 Json::LogicError，asBool/asString/asInt 对类型不符的值也抛。
+// 用户可手改的配置文件绝不允许把进程炸掉——容器非对象/键缺失/类型不符
+// 一律回默认值。所有读配置文件的取值必须走这里，不裸用 get/asXxx。
+bool jsonBoolOf(const Json::Value& v, const char* key, bool def = false);
+std::string jsonStringOf(const Json::Value& v, const char* key,
+                         const std::string& def = std::string());
+int jsonIntOf(const Json::Value& v, const char* key, int def = 0);
+// 成员访问：容器非对象时返回 null 单例（绝不抛）；键存在返回原值不判型，
+// 调用方自行 isInt()/isObject() 判断——替代“裸 [] 取成员再判型”的写法。
+const Json::Value& jsonMemberOf(const Json::Value& v, const char* key);
 // In-proc rime_frost.custom.yaml: backend patch lines verbatim (engine
 // behavior parity). 阶段3注：用户词典开启（多进程共享实证，见 24-交接）。
 std::string buildInProcCustomPatch(const std::wstring& backendUserDir,

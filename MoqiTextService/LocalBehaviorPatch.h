@@ -27,6 +27,8 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
     ++lines;
   };
   auto jsonBool = [&](const char* key) {
+    // cfg 非对象（手改坏成数组/标量）时 operator[] 会抛——按全关处理。
+    if (!cfg.isObject()) return false;
     const Json::Value& x = cfg[key];
     return x.isBool() && x.asBool();
   };
@@ -53,8 +55,9 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
     emit("engine/filters/-: lua_filter@*aux_lookup_filter");
   }
   // MixedPair 默认开（Go defaultBigramRerankConfig）；关闭时不再禁用学习。
+  // contextual 非对象（手改坏）按默认走，绝不抛。
   bool rerankMixed = true;
-  {
+  if (contextual.isObject()) {
     const Json::Value& br = contextual["bigram_rerank"];
     if (br.isObject() && br["mixed_pair"].isBool()) {
       rerankMixed = br["mixed_pair"].asBool();

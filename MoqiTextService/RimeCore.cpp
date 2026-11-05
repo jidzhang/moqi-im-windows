@@ -55,6 +55,34 @@ wstring appDataRoamingDir() {
   return L"";
 }
 
+// jsoncpp 安全取值（声明见 RimeCore.h）：非对象容器/键缺失/类型不符
+// 一律回默认。jsoncpp 的 get/operator[] 在数组、标量上抛 Json::LogicError，
+// asBool/asString/asInt 对类型不符也抛（2026-11-06 jsonmatrix 可执行实证）。
+bool jsonBoolOf(const Json::Value& v, const char* key, bool def) {
+  if (!v.isObject()) return def;
+  const Json::Value& x = v[key];
+  return x.isBool() ? x.asBool() : def;
+}
+
+string jsonStringOf(const Json::Value& v, const char* key,
+                    const string& def) {
+  if (!v.isObject()) return def;
+  const Json::Value& x = v[key];
+  return x.isString() ? x.asString() : def;
+}
+
+int jsonIntOf(const Json::Value& v, const char* key, int def) {
+  if (!v.isObject()) return def;
+  const Json::Value& x = v[key];
+  return x.isInt() ? x.asInt() : def;
+}
+
+const Json::Value& jsonMemberOf(const Json::Value& v, const char* key) {
+  static const Json::Value kNull;
+  if (!v.isObject()) return kNull;
+  return v[key];
+}
+
 wstring localAppDataDir() {
   wchar_t* appData = nullptr;
   if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
@@ -88,7 +116,8 @@ wstring currentSchemeSetDirName() {
   {
     Json::CharReaderBuilder builder;
     std::string errs;
-    if (!Json::parseFromStream(builder, file, &cfg, &errs)) {
+    if (!Json::parseFromStream(builder, file, &cfg, &errs) ||
+        !cfg.isObject()) {
       return L"Rime";
     }
   }
@@ -358,13 +387,8 @@ void writeFileUtf8(const wstring& path, const string& content) {
 // udbtest 双进程交叉提交验证，见 24-交接）。进程内学习即时生效，跨进程
 // 学习在对方下次启动时可见。
 namespace {
-bool jsonBool(const Json::Value& v, const char* key) {
-  const Json::Value& x = v[key];
-  return x.isBool() && x.asBool();
-}
 string jsonString(const Json::Value& v, const char* key) {
-  const Json::Value& x = v[key];
-  return x.isString() ? x.asString() : string();
+  return jsonStringOf(v, key);
 }
 
 // Go grammar_model.go：auto 扫描 shared/user 目录，取 >=50MB 的最大 .gram。
@@ -666,7 +690,7 @@ int rimeMinLogLevelForTraits() {
     Json::CharReaderBuilder builder;
     Json::parseFromStream(builder, file, &cfg, &errs);
     for (const char* key : {"logLevel", "loglevel"}) {
-      string level = cfg.get(key, "").asString();
+      string level = jsonStringOf(cfg, key);
       transform(level.begin(), level.end(), level.begin(),
                 [](unsigned char c) { return (char)tolower(c); });
       if (level == "trace" || level == "debug") {
@@ -1085,13 +1109,13 @@ bool writeJsonRoot(const std::wstring& path, const Json::Value& root) {
 }
 
 void readSharedFromJson(const Json::Value& cfg, SharedInputState* out) {
-  out->enabled = cfg.get("input_state_shared", false).asBool();
+  out->enabled = jsonBoolOf(cfg, "input_state_shared");
   out->options.clear();
-  const Json::Value& opts = cfg["shared_options"];
+  const Json::Value& opts = jsonMemberOf(cfg, "shared_options");
   if (opts.isObject()) {
     for (const char* name : kSharedOptionNames) {
       if (opts.isMember(name)) {
-        out->options[name] = opts[name].asBool();
+        out->options[name] = jsonBoolOf(opts, name);
       }
     }
   }
@@ -1207,7 +1231,7 @@ std::string loadSyncedSchemaId() {
   const std::wstring path = sharedAppearanceConfigPath();
   if (path.empty()) return "";
   Json::Value cfg = readJsonRoot(path);
-  return cfg.get("current_schema_id", "").asString();
+  return jsonStringOf(cfg, "current_schema_id");
 }
 
 void saveSyncedSchemaId(const std::string& schemaId) {
