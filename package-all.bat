@@ -14,7 +14,7 @@ if "%VER%"=="" (
 
 echo.
 echo Building all 5 tiers for version %VER% ...
-echo (Go backend + TSF DLL x64/x86 + dict prebuild + Inno x5, about 15 min)
+echo (daemon + TSF DLL x64/x86 + dict prebuild + Inno x5, about 6 min)
 echo Log: installer\dist\package-all.log
 echo.
 
