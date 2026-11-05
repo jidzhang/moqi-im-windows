@@ -134,15 +134,15 @@ int main() {
   Moqi::clampCandidateWindowPos(&pos, work, topLine, 200, 80);
   check(pos.y == 1040 - 8 - 80, "clamp: cannot flip, pinned to bottom");
 
-  // 尺寸未知（0）：左/上缘的点夹取仍生效；右/下缘不按整窗处理
-  // （这两条锁住 width>0/height>0 守卫——删守卫后右缘会把 x 夹到 1912）。
+  // 尺寸未知（0）：左/上缘的点夹取仍生效；右/下缘不按整窗处理。
+  // x=1915/y=1035 都越右/下缘线（>1912/>1032），任一守卫被删就会被夹走，
+  // 一条断言锁死 width>0 与 height>0 两个守卫。
   pos = {-50, 500};
   Moqi::clampCandidateWindowPos(&pos, work, line, 0, 0);
-  check(pos.x == 8 && pos.y == 500,
-        "clamp: zero size still point-clamps left edge");
-  pos = {1915, 1030};
+  check(pos.x == 8, "clamp: zero size still point-clamps left edge");
+  pos = {1915, 1035};
   Moqi::clampCandidateWindowPos(&pos, work, line, 0, 0);
-  check(pos.x == 1915 && pos.y == 1030,
+  check(pos.x == 1915 && pos.y == 1035,
         "clamp: zero size skips window-width right/bottom clamp");
 
   std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
