@@ -30,6 +30,9 @@
 
 .PARAMETER IssPath
   Optional path to the Inno Setup script (default: RepoRoot\installer\MoqiTsf.iss).
+
+.PARAMETER GramPath
+  Optional standard-tier grammar model forwarded to build-installer.ps1.
 #>
 param(
     [string] $RepoRoot = "",
@@ -38,7 +41,9 @@ param(
     [string] $MoqiImeSource = "",
     [switch] $SkipMoqiImeCopy,
     [string] $StageDir = "",
-    [string] $IssPath = ""
+    [string] $IssPath = "",
+    # 标准档 gram（build-installer.ps1 -GramPath）；为空则打基础包。
+    [string] $GramPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -262,6 +267,10 @@ Write-Host "Stage prepared at: $StageDir"
 Write-Host "Win32 payload: $stageWin32Root"
 Write-Host "x64 payload: $stageX64Root"
 
-& $installerScript -StageDir $StageDir -IssPath $IssPath
+$installerArgs = @{ StageDir = $StageDir; IssPath = $IssPath }
+if (-not [string]::IsNullOrWhiteSpace($GramPath)) {
+    $installerArgs.GramPath = $GramPath
+}
+& $installerScript @installerArgs
 
 Write-Host "Installer build finished."

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   One-click build for moqi-ime backend, moqi-im-windows binaries, and installer package.
@@ -20,6 +20,13 @@
 
 .PARAMETER ProtobufSourceDir
   Optional local protobuf source tree forwarded to scripts\build.ps1.
+
+.PARAMETER GramPath
+  Standard-tier grammar model (default: installer\dist\zh-moqi.gram).
+  Missing file is an error: the standard package must ship the gram.
+
+.PARAMETER WithoutGram
+  Explicitly build a base package without the standard gram (lint/lite/dev only).
 #>
 param(
     [string] $RepoRoot = "",
@@ -28,7 +35,11 @@ param(
     [string] $Generator = "Visual Studio 17 2022",
     [string] $ProtobufRoot = "",
     [string] $ProtobufSourceDir = "",
-    [string] $Version = ""
+    [string] $Version = "",
+    # 标准档必须带 9MB zh-moqi.gram。默认取 installer\dist\zh-moqi.gram，
+    # 缺失直接报错；只有显式 -WithoutGram 才允许产出无 gram 的基础包。
+    [string] $GramPath = "",
+    [switch] $WithoutGram
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +86,19 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
     Set-Content -LiteralPath (Join-Path $RepoRoot "version.txt") `
         -Value "$normalizedVersion`n" -NoNewline -Encoding ascii
     Write-Host "[INFO] version.txt <- $normalizedVersion"
+}
+
+# 标准档的 9MB gram 必须随包；之前直接跑本脚本产出的 62.7MB 包漏了它，
+# 覆盖安装会把用户的 gram 洗掉。默认强制包含，只有 -WithoutGram 可跳过。
+if (-not $WithoutGram) {
+    if ([string]::IsNullOrWhiteSpace($GramPath)) {
+        $GramPath = Join-Path $RepoRoot "installer\dist\zh-moqi.gram"
+    }
+    if (-not (Test-Path -LiteralPath $GramPath)) {
+        throw "Standard tier requires the grammar model, but it was not found: $GramPath. Pass -GramPath or use -WithoutGram to build a base package explicitly."
+    }
+    $GramPath = (Resolve-Path -LiteralPath $GramPath).Path
+    Write-Host "[INFO] standard gram: $GramPath"
 }
 
 if (-not $MoqiImeRoot) { $MoqiImeRoot = Join-Path $RepoRoot "..\moqi-ime" }
@@ -165,13 +189,17 @@ if ($ProtobufRoot) {
 Invoke-Step -FilePath "powershell.exe" -ArgumentList $windowsBuildArgs -WorkingDirectory $RepoRoot
 
 Write-Host "== Step 3/3: Build installer package =="
-Invoke-Step -FilePath "powershell.exe" -ArgumentList @(
+$installArgs = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$windowsInstallScript`"",
     "-RepoRoot", "`"$RepoRoot`"",
     "-MoqiImeSource", "`"$moqiImeRuntimeDir`""
-) -WorkingDirectory $RepoRoot
+)
+if (-not [string]::IsNullOrWhiteSpace($GramPath)) {
+    $installArgs += @("-GramPath", "`"$GramPath`"")
+}
+Invoke-Step -FilePath "powershell.exe" -ArgumentList $installArgs -WorkingDirectory $RepoRoot
 
 # Product name now carries the version suffix (2026-10-25): accept the versioned
 # file produced by build-installer.ps1, falling back to the legacy plain name.

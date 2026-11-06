@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Build all FIVE installer tiers locally (2026-11-04, universal x86 engine):
@@ -66,24 +66,22 @@ $buildInstaller = Join-Path $RepoRoot "installer\build-installer.ps1"
 $stageDir = Join-Path $RepoRoot "installer\stage"
 
 Write-Host "== Tier 1/5: standard (shared stage + version.txt + 9MB gram) =="
+# 标准档的 gram 由 _all_in_package.ps1 统一带进安装包（2026-11-06：
+# 直接跑 _all_in_package.ps1 曾产出漏 gram 的 62.7MB 包），这里显式传入
+# 并做存在性检查，不再二次跑 ISCC。
+$StdGram = Join-Path $RepoRoot "installer\dist\zh-moqi.gram"
+if (-not (Test-Path -LiteralPath $StdGram)) { throw "standard gram not found: $StdGram" }
 $allArgs = @{
     RepoRoot = $RepoRoot
     Configuration = $Configuration
     Generator = $Generator
+    GramPath = $StdGram
 }
 if ($MoqiImeRoot) { $allArgs.MoqiImeRoot = $MoqiImeRoot }
 if ($ProtobufRoot) { $allArgs.ProtobufRoot = $ProtobufRoot }
 if ($ProtobufSourceDir) { $allArgs.ProtobufSourceDir = $ProtobufSourceDir }
 if ($Version) { $allArgs.Version = $Version }
 & $allIn @allArgs
-# 2026-10-29: standard tier now ships the 9MB zh-moqi.gram.
-# Re-run ISCC on the shared stage with -GramPath instead of plumbing the
-# parameter through two layers of scripts.
-$StdGram = Join-Path $RepoRoot "installer\dist\zh-moqi.gram"
-if (-not (Test-Path -LiteralPath $StdGram)) { throw "standard gram not found: $StdGram" }
-& $buildInstaller -StageDir $stageDir `
-    -OutputName "moqi-im-windows-setup" `
-    -GramPath $StdGram
 
 Write-Host "== Tier 2/5: lite (1.1MB essay-crop gram: top-100k pairs) =="
 $LiteGram = Join-Path $RepoRoot "installer\dist\zh-moqi-lite.gram"
