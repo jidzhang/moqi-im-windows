@@ -465,6 +465,9 @@ void TextService::onActivate() {
 	    << L" " << foregroundWindowSummary();
 	logDebug(log.str());
 	ensureClientForCurrentProfile(L"onActivate");
+	// AppContainer 进程：表里已有按钮时（未经过 Deactivate 的再激活）推一次；
+	// 按钮随 daemon 回包异步重建的场景由 updateLanguageButtons 末尾的推送覆盖。
+	pushLangBarUpdateForIndicator(L"onActivate");
 }
 
 // virtual
@@ -519,6 +522,9 @@ void TextService::onSetThreadFocus() {
 	logDebug(log.str());
 	dumpLangBarState(L"onSetThreadFocus");
 	ensureClientForCurrentProfile(L"onSetThreadFocus");
+	// AppContainer 进程：焦点回到本线程且按钮还在表里时推一次更新，
+	// 否则输入指示器不拉取、任务栏"中"图标消失（便笺实证 2026-11-06）。
+	pushLangBarUpdateForIndicator(L"onSetThreadFocus");
 }
 
 
@@ -1392,6 +1398,47 @@ void CALLBACK TextService::onMessageTimeout(HWND hwnd, UINT msg, UINT_PTR id, DW
 
 
 void TextService::updateLangButtons() {
+}
+
+// 当前进程是否跑在 AppContainer 里（便笺等 UWP）。
+static bool isAppContainerProcess() {
+	HANDLE token = nullptr;
+	if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
+		return false;
+	}
+	DWORD length = 0;
+	::GetTokenInformation(token, TokenIsAppContainer, nullptr, 0, &length);
+	if (length == 0) {
+		::CloseHandle(token);
+		return false;
+	}
+	DWORD isAppContainer = 0;
+	const BOOL ok = ::GetTokenInformation(token, TokenIsAppContainer,
+	                                      &isAppContainer, length, &length);
+	::CloseHandle(token);
+	return ok && isAppContainer != 0;
+}
+
+// 便笺图标消失的根治（2026-11-06 实证）：AppContainer 进程（便笺等 UWP）
+// 的焦点线程上，输入指示器不会主动拉取语言栏项——按钮注册成功、GetIcon
+// 也拿到图标，但指示器不来问 GetInfo，任务栏上"中"就不显示（普通 Win32
+// 进程每次焦点切换指示器都会自己拉，无此问题）。用户手动切换一次输入法
+// 能让图标出现，说明强制刷新路径有效。这里对每个已注册按钮发一次
+// OnUpdate 事件，指示器收到后重新拉取。普通 Win32 进程直接返回，不做
+// 多余重绘。
+void TextService::pushLangBarUpdateForIndicator(const wchar_t* reason) {
+	if (!isAppContainerProcess() || langBarButtonsById_.empty()) {
+		return;
+	}
+	for (auto& entry : langBarButtonsById_) {
+		if (entry.second) {
+			entry.second->update(TF_LBI_ICON | TF_LBI_STATUS);
+		}
+	}
+	appendRpcGuardLog(L"[langbar] push update tid=" +
+	                  std::to_wstring(::GetCurrentThreadId()) +
+	                  L" reason=" + (reason ? reason : L"?") +
+	                  L" buttons=" + std::to_wstring(langBarButtonCount()));
 }
 
 // bug#21 根因（2026-11-05）：语言栏按钮原先按 Client 各建一套。同一进程里

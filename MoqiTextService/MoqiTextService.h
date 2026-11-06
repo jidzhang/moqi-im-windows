@@ -53,6 +53,10 @@ public:
 	void registerLangBarButton(const std::string& id,
 	                           Ime::ComPtr<Moqi::LangBarButton> button);
 	size_t langBarButtonCount() const { return langBarButtonsById_.size(); }
+	// AppContainer 进程（便笺等 UWP）专用：输入指示器对这类焦点线程不会
+	// 主动拉取语言栏项，按钮注册成功也不显示。对每个已注册按钮发一次
+	// OnUpdate，等价于手动切换输入法的强制刷新。普通 Win32 进程直接返回。
+	void pushLangBarUpdateForIndicator(const wchar_t* reason);
 
 	virtual void onActivate();
 	virtual void onDeactivate();

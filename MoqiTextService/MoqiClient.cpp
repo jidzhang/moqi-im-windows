@@ -111,6 +111,40 @@ std::wstring rpcGuardLogPath() {
   return std::wstring(localAppData) + L"\\MoqiIM\\Log\\tsf-key-guard.log";
 }
 
+// AppContainer 进程（便笺等 UWP）写不了普通用户目录的
+// %LOCALAPPDATA%\MoqiIM\Log，回退到自己包身份的 LocalState 目录，
+// 否则这类进程的日志永远缺失（便笺图标问题取证全靠它）。
+static std::wstring packagedGuardLogPath() {
+  using GetCurrentPackageFamilyNameFunc = LONG(WINAPI *)(UINT32 *, PWSTR);
+  static const auto getFamily = reinterpret_cast<GetCurrentPackageFamilyNameFunc>(
+      ::GetProcAddress(::GetModuleHandleW(L"kernel32.dll"),
+                       "GetCurrentPackageFamilyName"));
+  if (getFamily == nullptr) {
+    return L"";
+  }
+  UINT32 length = 0;
+  if (getFamily(&length, nullptr) != ERROR_INSUFFICIENT_BUFFER || length == 0) {
+    return L"";
+  }
+  std::wstring family(length, L'\0');
+  if (getFamily(&length, &family[0]) != ERROR_SUCCESS) {
+    return L"";
+  }
+  family.resize(wcslen(family.c_str()));
+  if (family.empty()) {
+    return L"";
+  }
+  const wchar_t *profile = _wgetenv(L"USERPROFILE");
+  if (profile == nullptr || *profile == L'\0') {
+    return L"";
+  }
+  const std::wstring dir = std::wstring(profile) +
+                           L"\\AppData\\Local\\Packages\\" + family +
+                           L"\\LocalState\\MoqiIM";
+  ::CreateDirectoryW(dir.c_str(), nullptr);
+  return dir + L"\\tsf-key-guard.log";
+}
+
 void appendRpcGuardLog(const std::wstring &message) {
   const std::wstring logPath = rpcGuardLogPath();
   if (logPath.empty()) {
@@ -123,12 +157,23 @@ void appendRpcGuardLog(const std::wstring &message) {
   swprintf_s(timestamp, L"%04d-%02d-%02d %02d:%02d:%02d.%03d", now.wYear,
              now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
              now.wMilliseconds);
+  const std::wstring line =
+      L"[" + std::wstring(timestamp) + L"] " + message + L"\n";
 
   std::wofstream stream(logPath, std::ios::app);
-  if (!stream.is_open()) {
+  if (stream.is_open()) {
+    stream << line;
     return;
   }
-  stream << L"[" << timestamp << "] " << message << L"\n";
+  // 普通路径打不开（AppContainer 没权限）时回退到包目录。
+  static const std::wstring packagedPath = packagedGuardLogPath();
+  if (packagedPath.empty()) {
+    return;
+  }
+  std::wofstream fallback(packagedPath, std::ios::app);
+  if (fallback.is_open()) {
+    fallback << line;
+  }
 }
 
 void appendRpcTraceLog(const std::wstring &message) {
@@ -721,6 +766,11 @@ void Client::updateLanguageButtons(Json::Value &msg) {
       }
     }
   }
+
+  // AppContainer 进程（便笺等 UWP）：按钮（重）建好后输入指示器不会主动
+  // 来拉取语言栏项，图标不显示。这里推一次更新逼指示器重新拉取（详见
+  // TextService::pushLangBarUpdateForIndicator；普通 Win32 进程内部直接返回）。
+  textService_->pushLangBarUpdateForIndicator(L"updateLanguageButtons");
 }
 
 void Client::updatePreservedKeys(Json::Value &msg) {
