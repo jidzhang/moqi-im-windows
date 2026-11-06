@@ -8,13 +8,13 @@
   shared stage tree and version.txt. The other four tiers reuse that stage
   with -OutputName / -ExcludeBuild / -GramPath, exactly like CI does.
 
-  The wanxiang tier is LOCAL ONLY: full payload with the wanxiang grammar
-  model replacing essay (380MB; too large for a CI tier per user decision).
-  CI keeps building the three official tiers.
+  All five tiers share one stage tree built by _all_in_package.ps1; the only
+  differences are the bundled gram (and lite dropping the prebuilt dict
+  cache). release.yml builds the same five tiers from the gram-assets release.
 
   Output files (installer\dist\):
     moqi-im-windows-setup-<ver>.exe           (standard)
-    moqi-im-windows-setup-lite-<ver>.exe      (lite: no gram, no prebuilt data)
+    moqi-im-windows-setup-lite-<ver>.exe      (lite: 1.1MB lite gram, no prebuilt dict cache)
     moqi-im-windows-setup-essay-<ver>.exe     (essay gram bundled)
     moqi-im-windows-setup-wiki-<ver>.exe      (self-trained wiki gram bundled)
     moqi-im-windows-setup-wanxiang-<ver>.exe  (wanxiang gram bundled, local only)
@@ -39,8 +39,10 @@ $ErrorActionPreference = "Stop"
 if (-not $RepoRoot) { $RepoRoot = Join-Path $PSScriptRoot ".." }
 # Default $Version from version.txt: the wiki-tier existence check builds the
 # file name from $Version, so an empty value looks for "wiki-.exe" and reports
-# "wiki tier failed" even though the installer was produced (utf8/ANSI hazard:
-# keep this file pure ASCII).
+# "wiki tier failed" even though the installer was produced.
+# Encoding note (2026-11-06): this file now carries Chinese comments and MUST
+# stay UTF-8 with BOM -- PowerShell 5.1 reads a BOM-less file as ANSI and the
+# comments turn to mojibake.
 if (-not $Version) {
     $Version = (Get-Content (Join-Path $RepoRoot "version.txt") -Raw).Trim()
 }

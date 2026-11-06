@@ -136,7 +136,7 @@ Windows 端的输入法前端，负责把 `moqi-ime` 后端接入 **Microsoft Te
 
 - **技术栈**：C++ / Go、Microsoft TSF、Win32 API、命名管道 + libuv、protobuf、spdlog、CMake + Visual Studio 2022
 - **源码布局**：`MoqiTextService`（TSF 文本服务/DLL）、`MoqLauncher`（后端启动器）、`libIME2`（TSF 基础库）、`installer/`（Inno Setup 安装器）、`scripts/`（构建脚本）
-- **构建**：装好 Visual Studio 2022、CMake 3.21+、Windows SDK 后，根目录执行 `powershell -ExecutionPolicy Bypass -File .\scripts\_all_in_package.ps1`
+- **构建**：装好 Visual Studio 2022、CMake 3.21+、Windows SDK 后，根目录执行 `powershell -ExecutionPolicy Bypass -File .\scripts\_all_in_package.ps1`（标准档要求 `installer\dist\zh-moqi.gram` 已就位，缺失即报错；只出基础包用 `-WithoutGram`）
 - **参考**：[Microsoft TSF 文档](https://docs.microsoft.com/en-us/windows/win32/tsf/text-services-framework) · [PIME](https://github.com/EasyIME/PIME) · [小狼毫](https://github.com/rime/weasel)
 
 ## 致谢

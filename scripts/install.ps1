@@ -110,7 +110,8 @@ function Resolve-MoqiImeSource {
 
     foreach ($candidate in $candidates) {
         $fullPath = [System.IO.Path]::GetFullPath($candidate)
-        if (Test-Path -LiteralPath (Join-Path $fullPath "MoqiIME.exe")) {
+        # 探测标记用 rime.dll（运行时树必需产物）；MoqiIME.exe 已退休不再产出。
+        if (Test-Path -LiteralPath (Join-Path $fullPath "input_methods\rime\rime.dll")) {
             return $fullPath
         }
     }

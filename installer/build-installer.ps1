@@ -64,9 +64,22 @@ if (-not (Test-Path -LiteralPath $IssPath)) {
 
 $candidates = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
-    'ISCC.exe'
+    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
 )
+
+# Custom-drive installs (per-user on another drive) only show up in the
+# uninstall registry keys, so derive one more candidate from InstallLocation.
+$hives = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+foreach ($entry in Get-ItemProperty -Path $hives -ErrorAction SilentlyContinue) {
+    if ($entry.DisplayName -like 'Inno Setup*' -and $entry.InstallLocation) {
+        $candidates += (Join-Path $entry.InstallLocation 'ISCC.exe')
+    }
+}
+$candidates += 'ISCC.exe'
 $iscc = $null
 foreach ($c in $candidates) {
     if ($c -eq 'ISCC.exe') {

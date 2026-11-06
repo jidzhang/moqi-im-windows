@@ -89,8 +89,11 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
 }
 
 # 标准档的 9MB gram 必须随包；之前直接跑本脚本产出的 62.7MB 包漏了它，
-# 覆盖安装会把用户的 gram 洗掉。默认强制包含，只有 -WithoutGram 可跳过。
-if (-not $WithoutGram) {
+# 覆盖安装会把用户的 gram 洗掉。默认强制包含，只有 -WithoutGram 可跳过；
+# -WithoutGram 显式要求基础包，优先于误传的 -GramPath。
+if ($WithoutGram) {
+    $GramPath = ""
+} else {
     if ([string]::IsNullOrWhiteSpace($GramPath)) {
         $GramPath = Join-Path $RepoRoot "installer\dist\zh-moqi.gram"
     }
@@ -160,31 +163,36 @@ foreach ($path in @($moqiImeBuildScript, $windowsBuildScript, $windowsInstallScr
 }
 
 Write-Host "== Step 1/3: Build moqi-ime runtime =="
+# Argument elements are passed through & as-is: paths with spaces get quoted
+# by PowerShell itself. Hand-embedded quotes break under a pwsh 7 host
+# (powershell.exe then receives -File '"<path>"' -> "Illegal characters in
+# path"), so keep the elements bare (2026-11-06).
 Invoke-Step -FilePath "powershell.exe" -ArgumentList @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-File", "`"$moqiImeBuildScript`"",
-    "-RepoRoot", "`"$MoqiImeRoot`""
+    "-File", $moqiImeBuildScript,
+    "-RepoRoot", $MoqiImeRoot
 ) -WorkingDirectory $MoqiImeRoot
 
-if (-not (Test-Path -LiteralPath (Join-Path $moqiImeRuntimeDir "MoqiIME.exe"))) {
+# Go 后端已退休：运行时树的必需产物是 rime.dll 与打包数据，不再有 MoqiIME.exe。
+if (-not (Test-Path -LiteralPath (Join-Path $moqiImeRuntimeDir "input_methods\rime\rime.dll"))) {
     throw "moqi-ime runtime was not produced: $moqiImeRuntimeDir"
 }
 
 Write-Host "== Step 2/3: Build moqi-im-windows binaries =="
- $windowsBuildArgs = @(
+$windowsBuildArgs = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-File", "`"$windowsBuildScript`"",
-    "-RepoRoot", "`"$RepoRoot`"",
+    "-File", $windowsBuildScript,
+    "-RepoRoot", $RepoRoot,
     "-Configuration", $Configuration,
-    "-Generator", "`"$Generator`""
+    "-Generator", $Generator
 )
 if ($ProtobufSourceDir) {
-    $windowsBuildArgs += @("-ProtobufSourceDir", "`"$ProtobufSourceDir`"")
+    $windowsBuildArgs += @("-ProtobufSourceDir", $ProtobufSourceDir)
 }
 if ($ProtobufRoot) {
-    $windowsBuildArgs += @("-ProtobufRoot", "`"$ProtobufRoot`"")
+    $windowsBuildArgs += @("-ProtobufRoot", $ProtobufRoot)
 }
 Invoke-Step -FilePath "powershell.exe" -ArgumentList $windowsBuildArgs -WorkingDirectory $RepoRoot
 
@@ -192,12 +200,12 @@ Write-Host "== Step 3/3: Build installer package =="
 $installArgs = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-File", "`"$windowsInstallScript`"",
-    "-RepoRoot", "`"$RepoRoot`"",
-    "-MoqiImeSource", "`"$moqiImeRuntimeDir`""
+    "-File", $windowsInstallScript,
+    "-RepoRoot", $RepoRoot,
+    "-MoqiImeSource", $moqiImeRuntimeDir
 )
 if (-not [string]::IsNullOrWhiteSpace($GramPath)) {
-    $installArgs += @("-GramPath", "`"$GramPath`"")
+    $installArgs += @("-GramPath", $GramPath)
 }
 Invoke-Step -FilePath "powershell.exe" -ArgumentList $installArgs -WorkingDirectory $RepoRoot
 
