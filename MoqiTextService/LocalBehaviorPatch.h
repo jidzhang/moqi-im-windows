@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <string>
 
+#include "JsonSafeRead.h"
+
 namespace Moqi {
 
 // 参数：
@@ -26,31 +28,25 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
     body += "  " + line + "\n";
     ++lines;
   };
-  auto jsonBool = [&](const char* key) {
-    // cfg 非对象（手改坏成数组/标量）时 operator[] 会抛——按全关处理。
-    if (!cfg.isObject()) return false;
-    const Json::Value& x = cfg[key];
-    return x.isBool() && x.asBool();
-  };
 
-  if (jsonBool("disable_slash_punct")) {
+  if (jsonBoolOf(cfg, "disable_slash_punct")) {
     emit("recognizer/patterns/punct: null");
-  } else if (jsonBool("slash_punct_v_only")) {
+  } else if (jsonBoolOf(cfg, "slash_punct_v_only")) {
     emit("recognizer/patterns/punct: \"^v([0-9]|10|[A-Za-z]+)$\"");
   }
-  if (jsonBool("disable_unicode_trigger")) {
+  if (jsonBoolOf(cfg, "disable_unicode_trigger")) {
     emit("recognizer/patterns/unicode: null");
   }
-  if (jsonBool("disable_number_trigger")) {
+  if (jsonBoolOf(cfg, "disable_number_trigger")) {
     emit("recognizer/patterns/number: null");
   }
-  if (jsonBool("disable_lunar_trigger")) {
+  if (jsonBoolOf(cfg, "disable_lunar_trigger")) {
     emit("recognizer/patterns/gregorian_to_lunar: null");
   }
-  if (jsonBool("disable_calculator")) {
+  if (jsonBoolOf(cfg, "disable_calculator")) {
     emit("recognizer/patterns/calculator: null");
   }
-  if (jsonBool("disable_aux_lookup")) {
+  if (jsonBoolOf(cfg, "disable_aux_lookup")) {
     emit("engine/translators/-: table_translator@frost_aux");
     emit("engine/filters/-: lua_filter@*aux_lookup_filter");
   }
@@ -73,7 +69,7 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
     emit("translator/contextual_suggestions: true");
     // 手填罚分优先；否则按出厂模型给 -4（wanxiang 本地模型为 0）。
     double penalty = -4;
-    const Json::Value& pv = cfg["grammar_penalty"];
+    const Json::Value& pv = jsonMemberOf(cfg, "grammar_penalty");
     if (pv.isNumeric()) {
       penalty = pv.asDouble();
       if (penalty < -20 || penalty > 0) penalty = -4;

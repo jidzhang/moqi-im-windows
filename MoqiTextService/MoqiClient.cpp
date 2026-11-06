@@ -23,6 +23,7 @@
 #include "KeyGuardLog.h"
 #include "libIME2/src/Utils.h"
 #include "libIME2/src/DebugLogConfig.h"
+#include "libIME2/src/DebugLogFile.h"
 #include "../proto/ProtoFraming.h"
 #include <algorithm>
 #include <atomic>
@@ -141,7 +142,7 @@ static std::wstring packagedGuardLogPath() {
   const std::wstring dir = std::wstring(profile) +
                            L"\\AppData\\Local\\Packages\\" + family +
                            L"\\LocalState\\MoqiIM";
-  ::CreateDirectoryW(dir.c_str(), nullptr);
+  Ime::DebugLogFile::ensureDirectoryRecursive(dir);
   return dir + L"\\tsf-key-guard.log";
 }
 
@@ -151,14 +152,26 @@ void appendRpcGuardLog(const std::wstring &message) {
     return;
   }
 
+  // 归因前缀（exe#pid）：本文件被所有加载 TSF DLL 的进程共享追加，
+  // 不带归因时多进程混写无法区分来源（2026-11-06 用户反馈日志乱套）。
+  // 进程身份终生不变，静态缓存一次。
+  static const std::wstring who = [] {
+    wchar_t exe[MAX_PATH] = {};
+    ::GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const wchar_t* slash = wcsrchr(exe, L'\\');
+    const wchar_t* leaf = slash ? slash + 1 : exe;
+    return std::wstring(leaf) + L"#" +
+           std::to_wstring(::GetCurrentProcessId());
+  }();
+
   SYSTEMTIME now{};
   ::GetLocalTime(&now);
   wchar_t timestamp[32] = {};
   swprintf_s(timestamp, L"%04d-%02d-%02d %02d:%02d:%02d.%03d", now.wYear,
              now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
              now.wMilliseconds);
-  const std::wstring line =
-      L"[" + std::wstring(timestamp) + L"] " + message + L"\n";
+  const std::wstring line = L"[" + std::wstring(timestamp) + L"][" + who +
+                            L"] " + message + L"\n";
 
   std::wofstream stream(logPath, std::ios::app);
   if (stream.is_open()) {
@@ -699,6 +712,10 @@ void Client::updateComposition(Json::Value &msg, Ime::EditSession *session,
 }
 
 void Client::updateLanguageButtons(Json::Value &msg) {
+  // 语言栏按钮有增/删/改才推指示器刷新：本函数在每次 daemon 回包（含每键
+  // 回包）末尾都会被调用，组字期绝大多数回包不带按钮字段，不该每键都付
+  // 一轮 COM OnUpdate + 日志落盘的代价。注册时刻的推送（bug#24 修复）不受影响。
+  bool buttonsChanged = false;
   // language buttons
   const auto &addButtonVal = msg["addButton"];
   if (addButtonVal.isArray()) {
@@ -710,6 +727,7 @@ void Client::updateLanguageButtons(Json::Value &msg) {
       // 的项互相顶掉 → 语言栏上"中英图标莫名消失"。
       if (auto existing = textService_->langBarButtonForId(addId)) {
         existing->updateFromJson(btn);
+        buttonsChanged = true;
         continue;
       }
       auto langBtn = Ime::ComPtr<Moqi::LangBarButton>::takeover(
@@ -728,6 +746,7 @@ void Client::updateLanguageButtons(Json::Value &msg) {
                             std::to_wstring(static_cast<long>(addHr)));
         }
         textService_->registerLangBarButton(addId, langBtn);
+        buttonsChanged = true;
       } else {
         appendRpcGuardLog(L"[addButton] id=" + utf8ToUtf16(addId.c_str()) +
                           L" fromJson returned NULL");
@@ -743,6 +762,7 @@ void Client::updateLanguageButtons(Json::Value &msg) {
         if (auto existing = textService_->langBarButtonForId(id)) {
           textService_->removeButton(existing);
           textService_->registerLangBarButton(id, nullptr);
+          buttonsChanged = true;
         }
       }
     }
@@ -754,6 +774,7 @@ void Client::updateLanguageButtons(Json::Value &msg) {
         string id = btn["id"].asString();
         if (auto existing = textService_->langBarButtonForId(id)) {
           existing->updateFromJson(btn);
+          buttonsChanged = true;
           // bug#21 取证（trace 档）：图标刷新走没走到。常规路径不进 error 档。
           appendRpcTraceLog(L"[langbar] changeButton id=" +
                             utf8ToUtf16(id.c_str()) + L" icon=" +
@@ -767,10 +788,13 @@ void Client::updateLanguageButtons(Json::Value &msg) {
     }
   }
 
-  // AppContainer 进程（便笺等 UWP）：按钮（重）建好后输入指示器不会主动
-  // 来拉取语言栏项，图标不显示。这里推一次更新逼指示器重新拉取（详见
-  // TextService::pushLangBarUpdateForIndicator；普通 Win32 进程内部直接返回）。
-  textService_->pushLangBarUpdateForIndicator(L"updateLanguageButtons");
+  // 按钮（重）建好后推一次更新，逼输入指示器重新拉取语言栏项——指示器
+  // 停在"不再拉取"状态时图标不显示，AppContainer 与普通 Win32 进程都会
+  // 发生（详见 TextService::pushLangBarUpdateForIndicator）。每键回包大多
+  // 不带按钮字段，buttonsChanged 门控保证常态零推送。
+  if (buttonsChanged) {
+    textService_->pushLangBarUpdateForIndicator(L"updateLanguageButtons");
+  }
 }
 
 void Client::updatePreservedKeys(Json::Value &msg) {

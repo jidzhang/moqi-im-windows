@@ -1400,34 +1400,17 @@ void CALLBACK TextService::onMessageTimeout(HWND hwnd, UINT msg, UINT_PTR id, DW
 void TextService::updateLangButtons() {
 }
 
-// 当前进程是否跑在 AppContainer 里（便笺等 UWP）。
-static bool isAppContainerProcess() {
-	HANDLE token = nullptr;
-	if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
-		return false;
-	}
-	DWORD length = 0;
-	::GetTokenInformation(token, TokenIsAppContainer, nullptr, 0, &length);
-	if (length == 0) {
-		::CloseHandle(token);
-		return false;
-	}
-	DWORD isAppContainer = 0;
-	const BOOL ok = ::GetTokenInformation(token, TokenIsAppContainer,
-	                                      &isAppContainer, length, &length);
-	::CloseHandle(token);
-	return ok && isAppContainer != 0;
-}
-
-// 便笺图标消失的根治（2026-11-06 实证）：AppContainer 进程（便笺等 UWP）
-// 的焦点线程上，输入指示器不会主动拉取语言栏项——按钮注册成功、GetIcon
-// 也拿到图标，但指示器不来问 GetInfo，任务栏上"中"就不显示（普通 Win32
-// 进程每次焦点切换指示器都会自己拉，无此问题）。用户手动切换一次输入法
-// 能让图标出现，说明强制刷新路径有效。这里对每个已注册按钮发一次
-// OnUpdate 事件，指示器收到后重新拉取。普通 Win32 进程直接返回，不做
-// 多余重绘。
+// 便笺图标消失的根治（2026-11-06 实证）：输入指示器在某些焦点线程上不会
+// 主动（重新）拉取语言栏项——按钮注册成功、GetIcon 也拿到图标，但指示器
+// 不来问 GetInfo，任务栏上"中"就不显示。最先在 AppContainer 进程（便笺等
+// UWP）实证；同日进一步实证普通 Win32 进程（wezterm/TotalCommander/记事本）
+// 同样会停在"不再拉取"的状态——焦点路过无 TSF 的前台窗口（如 daemon 的
+// 部署结果弹窗）后复现，手动切换一次输入法能让图标回来，说明强制刷新
+// 路径有效。因此推送不按进程类型门控：对每个已注册按钮发一次 OnUpdate
+// 事件，指示器收到后重新拉取。调用点都是低频事件（激活/焦点切换/按钮
+// 增删），无每键代价。
 void TextService::pushLangBarUpdateForIndicator(const wchar_t* reason) {
-	if (!isAppContainerProcess() || langBarButtonsById_.empty()) {
+	if (langBarButtonsById_.empty()) {
 		return;
 	}
 	for (auto& entry : langBarButtonsById_) {
@@ -1435,8 +1418,9 @@ void TextService::pushLangBarUpdateForIndicator(const wchar_t* reason) {
 			entry.second->update(TF_LBI_ICON | TF_LBI_STATUS);
 		}
 	}
-	appendRpcGuardLog(L"[langbar] push update tid=" +
+	appendRpcTraceLog(L"[langbar] push update tid=" +
 	                  std::to_wstring(::GetCurrentThreadId()) +
+	                  L" exe=" + processBaseName(currentProcessPath()) +
 	                  L" reason=" + (reason ? reason : L"?") +
 	                  L" buttons=" + std::to_wstring(langBarButtonCount()));
 }

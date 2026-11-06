@@ -85,6 +85,12 @@ int main() {
   check(inputRectScore(wideMarker, &foreground, false) ==
             inputRectScore(inside, &foreground, false),
         "score: width-5 rect is not a top-left marker");
+  // 边界值：宽恰好 4、距左上角恰好 48、高恰好 48——三条件同时压线仍算
+  // 小标记（把任一 <= 收紧成 < 都会让本断言变红，防止阈值被悄悄改掉）。
+  const RECT markerAtBounds = makeRect(148, 148, 152, 196);
+  check(inputRectScore(markerAtBounds, &foreground, false) ==
+            inputRectScore(inside, &foreground, false) - 80,
+        "score: width-4/dist-48/height-48 rect is still a top-left marker");
 
   // 无前景窗矩形：几何罚分仍在
   check(inputRectScore(inside, nullptr, false) == 0,
@@ -133,6 +139,13 @@ int main() {
   const RECT topLine = makeRect(500, 0, 560, 20);
   Moqi::clampCandidateWindowPos(&pos, work, topLine, 200, 80);
   check(pos.y == 1040 - 8 - 80, "clamp: cannot flip, pinned to bottom");
+
+  // 窗比工作区还高：钉底得到负 y，必须被内层再夹回工作区上缘
+  // （候选 40 行大字号时 height 可超工作区高度；内层 re-clamp 被删则
+  // 本断言变红——上一格 height=80 钉底结果仍在区内，压不住这条分支）。
+  pos = {500, 1030};
+  Moqi::clampCandidateWindowPos(&pos, work, topLine, 200, 1600);
+  check(pos.y == 8, "clamp: window taller than work pinned to top");
 
   // 尺寸未知（0）：左/上缘的点夹取仍生效；右/下缘不按整窗处理。
   // x=1915/y=1035 都越右/下缘线（>1912/>1032），任一守卫被删就会被夹走，

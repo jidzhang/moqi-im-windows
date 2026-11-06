@@ -55,34 +55,6 @@ wstring appDataRoamingDir() {
   return L"";
 }
 
-// jsoncpp 安全取值（声明见 RimeCore.h）：非对象容器/键缺失/类型不符
-// 一律回默认。jsoncpp 的 get/operator[] 在数组、标量上抛 Json::LogicError，
-// asBool/asString/asInt 对类型不符也抛（2026-11-06 jsonmatrix 可执行实证）。
-bool jsonBoolOf(const Json::Value& v, const char* key, bool def) {
-  if (!v.isObject()) return def;
-  const Json::Value& x = v[key];
-  return x.isBool() ? x.asBool() : def;
-}
-
-string jsonStringOf(const Json::Value& v, const char* key,
-                    const string& def) {
-  if (!v.isObject()) return def;
-  const Json::Value& x = v[key];
-  return x.isString() ? x.asString() : def;
-}
-
-int jsonIntOf(const Json::Value& v, const char* key, int def) {
-  if (!v.isObject()) return def;
-  const Json::Value& x = v[key];
-  return x.isInt() ? x.asInt() : def;
-}
-
-const Json::Value& jsonMemberOf(const Json::Value& v, const char* key) {
-  static const Json::Value kNull;
-  if (!v.isObject()) return kNull;
-  return v[key];
-}
-
 wstring localAppDataDir() {
   wchar_t* appData = nullptr;
   if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
@@ -121,11 +93,8 @@ wstring currentSchemeSetDirName() {
       return L"Rime";
     }
   }
-  const Json::Value current = cfg.get("current", "Rime");
-  if (!current.isString()) {
-    return L"Rime";
-  }
-  const wstring name = utf8ToWide(current.asCString());
+  const string current = jsonStringOf(cfg, "current", "Rime");
+  const wstring name = utf8ToWide(current.c_str());
   if (name.empty() || name == L"." || name == L".." ||
       name.find_first_of(L"\\/") != wstring::npos) {
     return L"Rime";
@@ -387,10 +356,6 @@ void writeFileUtf8(const wstring& path, const string& content) {
 // udbtest 双进程交叉提交验证，见 24-交接）。进程内学习即时生效，跨进程
 // 学习在对方下次启动时可见。
 namespace {
-string jsonString(const Json::Value& v, const char* key) {
-  return jsonStringOf(v, key);
-}
-
 // Go grammar_model.go：auto 扫描 shared/user 目录，取 >=50MB 的最大 .gram。
 string detectAutoGrammar(const vector<wstring>& dirs) {
   string best;
@@ -446,7 +411,7 @@ string buildLocalBehaviorPatch(const wstring& sharedDataDir) {
 
   // 语法模型语言解析（文件 IO + 文件系统扫描留在这里；输出体生成在
   // LocalBehaviorPatch.h，可单测——10-26 配置脱节事故的回归锚）。
-  string setting = jsonString(cfg, "grammar_model");
+  string setting = jsonStringOf(cfg, "grammar_model");
   string lang;
   if (setting.empty() || setting == "auto" || setting == "AUTO") {
     vector<wstring> dirs;
@@ -759,6 +724,24 @@ RimeRuntime& RimeRuntime::instance() {
   return runtime;
 }
 
+namespace {
+// glog 日志文件基名按进程角色区分：MoqiDaemon.exe 是生产引擎，其余加载
+// 本 DLL 的进程是 TSF 前端。进程身份终生不变，静态缓存一次。
+const char* rimeLogBaseName() {
+  static const char* base = [] {
+    wchar_t exe[MAX_PATH] = {};
+    ::GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const wchar_t* slash = wcsrchr(exe, L'\\');
+    const wchar_t* leaf = slash ? slash + 1 : exe;
+    if (_wcsicmp(leaf, L"MoqiDaemon.exe") == 0) {
+      return "rime-daemon";
+    }
+    return "rime-tsf";
+  }();
+  return base;
+}
+}  // namespace
+
 #ifdef _WIN64
 namespace {
 
@@ -1008,7 +991,10 @@ void RimeRuntime::requestInit(const wstring& programDir,
       traits.distribution_name = "Rime";
       traits.distribution_code_name = "Moqi";
       traits.distribution_version = "inproc";
-      traits.app_name = "Rime.Moqi";
+      // glog 基名按进程角色区分（日志文件前缀一眼可辨）：daemon 与 TSF
+      // 进程内引擎共用本源码，此前统一 "Rime.Moqi"/旧版 "Rime.MoqiIM"，
+      // 两套文件无法归因（2026-11-06 日志整理）。
+      traits.app_name = rimeLogBaseName();
       // 与 Go 对齐（debug_logging.go rimeMinLogLevel）：默认 WARNING(1)，
       // 调试档（MoqiLauncher.json logLevel=debug/trace）放行 INFO(0)。
       // 此前误写 2（ERROR）——审计 2026-11-03。
