@@ -124,10 +124,14 @@ jobs:
       - name: Build nightly installer
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
+          # gram 此步尚未取回：缺 gram 的标准档会被脚本拒绝，显式
+          # -WithoutGram 出基础包，标准档由下面"Rebuild standard installer
+          # with gram"重打。
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\_all_in_package.ps1 `
             -RepoRoot "$env:GITHUB_WORKSPACE\moqi-im-windows" `
             -MoqiImeRoot "$env:GITHUB_WORKSPACE\moqi-ime" `
-            -ProtobufRoot "$env:PROTOBUF_ROOT"
+            -ProtobufRoot "$env:PROTOBUF_ROOT" `
+            -WithoutGram
 
       - name: Fetch built-in gram assets
         env:

@@ -152,11 +152,14 @@ jobs:
       - name: Build installer
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
+          # gram 此步尚未取回：缺 gram 的标准档会被脚本拒绝，显式
+          # -WithoutGram 出基础包，五档重打靠各自的 -GramPath。
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\_all_in_package.ps1 `
             -RepoRoot "$env:GITHUB_WORKSPACE\moqi-im-windows" `
             -MoqiImeRoot "$env:GITHUB_WORKSPACE\moqi-ime" `
             -ProtobufRoot "$env:PROTOBUF_ROOT" `
-            -Version "${{ steps.version.outputs.version }}"
+            -Version "${{ steps.version.outputs.version }}" `
+            -WithoutGram
 
       - name: Cache frozen gram assets
         uses: actions/cache@v4
