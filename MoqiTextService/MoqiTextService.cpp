@@ -481,9 +481,15 @@ void TextService::onDeactivate() {
 	// 被"莫名其妙"摘掉；也不能晚于此——按钮持有 ComPtr<TextService>，
 	// 不清空就成引用环，线程退出时整张图永不析构（每线程泄漏一份）。
 	// 重新激活时由 onActivate 响应里的 addButton 全套重建。
+	const int clearedButtons = langBarButtonCount();
 	clearLangBarButtons();
 	langBarButtonsById_.clear();
-	appendRpcGuardLog(L"[langbar] deactivated, buttons cleared n=0");
+	// 只有按钮表非空时才留痕（无按钮的反激活是常态，不记录——
+	// 否则每次焦点切换都写一行，日志变成噪声）。
+	if (clearedButtons > 0) {
+		appendRpcGuardLog(L"[langbar] deactivated, cleared buttons n=" +
+		                  std::to_wstring(clearedButtons));
+	}
 }
 
 // virtual
