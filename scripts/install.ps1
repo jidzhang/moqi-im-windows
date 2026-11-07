@@ -184,11 +184,7 @@ New-Item -ItemType Directory -Path $stageWin32Root -Force | Out-Null
 New-Item -ItemType Directory -Path $stageX64Root -Force | Out-Null
 New-Item -ItemType Directory -Path $stageWin32X64Root -Force | Out-Null
 
-$backends = Join-Path $RepoRoot "backends.json"
-if (-not (Test-Path -LiteralPath $backends)) {
-    throw "Missing backends.json at $backends"
-}
-Copy-Item -LiteralPath $backends -Destination (Join-Path $stageWin32Root "backends.json") -Force
+# backends.json 已移除（Go 时代配置，C++ daemon 不读，2026-11-08）。
 
 # 2026-11-03 已退休：MoqiLaunch.exe 不再入包（引擎在 MoqiDaemon 与 TSF DLL，
 # 启动器只会抢管道/单实例锁）。旧包遗留副本由 .iss [InstallDelete] 清掉。
