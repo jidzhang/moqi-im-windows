@@ -646,7 +646,7 @@ InputOverlay computeInputOverlay(const std::string& rawInput,
 int rimeMinLogLevelForTraits() {
   const wstring dir = localAppDataDir();
   if (dir.empty()) {
-    return 1;
+    return 2;
   }
   Json::Value cfg;
   ifstream file(dir + L"\\MoqiIM\\MoqiLauncher.json", ifstream::binary);
@@ -663,7 +663,11 @@ int rimeMinLogLevelForTraits() {
       }
     }
   }
-  return 1;
+  // 默认 ERROR(2)：glog 每条消息会写入自身级别与所有更低级别的文件，
+  // WARNING 默认也会连带产生 INFO 文件（部署期词库重复定义告警可刷百 KB）。
+  // 按"平时零 glog 文件"取 ERROR；诊断时 MoqiLauncher.json logLevel=debug
+  // 放行 INFO（2026-11-07 用户定，取代 11-03 与 Go 对齐的 WARNING 口径）。
+  return 2;
 }
 
 // Go cleanupOversizedLogDir：日志目录超 512MB 时按 mtime 从最旧删起，
