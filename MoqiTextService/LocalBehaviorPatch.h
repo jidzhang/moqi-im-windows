@@ -85,6 +85,10 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
     emit("translator/sentence_quality_boost: -2");
     emit("translator/enable_transpose: true");
     emit("translator/transpose_credibility: -8");
+    // 纠错扫描窗口（bug#26 韵母盲区修复，2026-11-07 收编）：4 覆盖韵母
+    // 起始区（zhne→真的类错字可达）。六门验证：案例矩阵/d1/d3/d5/T 维/
+    // 显微镜/延迟（全新用户两臂同分布，窗口零成本）。
+    emit("translator/correction_scan_window: 4");
     emit("translator/enable_deletion: true");
     emit("translator/deletion_credibility: -8");
     emit("translator/enable_substitution: true");
