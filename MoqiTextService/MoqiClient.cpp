@@ -147,6 +147,11 @@ static std::wstring packagedGuardLogPath() {
 }
 
 void appendRpcGuardLog(const std::wstring &message) {
+  // 产品运行不写任何用户活动日志（按键/焦点/语言栏），只有
+  // logLevel=debug/trace 时才落盘——用户隐私优先于排障便利。
+  if (!Ime::isDebugLoggingEnabled()) {
+    return;
+  }
   const std::wstring logPath = rpcGuardLogPath();
   if (logPath.empty()) {
     return;
