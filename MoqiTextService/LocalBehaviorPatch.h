@@ -92,9 +92,6 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
   emit("translator/transpose_credibility: -8");
   // 纠错扫描窗口（bug#26 韵母盲区修复）：4 覆盖韵母起始区。
   emit("translator/correction_scan_window: 4");
-  // 词首多打删除（hshangxian→上限/上线 类，用户 11-07 实报）：
-  // 首遍限定词首单边，垃圾边风险有界；全量守卫随 60-计划 Day2。
-  emit("translator/enable_word_initial_deletion: true");
   emit("translator/enable_deletion: true");
   emit("translator/deletion_credibility: -8");
   emit("translator/enable_substitution: true");
