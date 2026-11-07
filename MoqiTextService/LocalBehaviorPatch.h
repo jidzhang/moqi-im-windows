@@ -83,22 +83,27 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
     emit("melt_eng/initial_quality: 0.01");
     emit("reduce_english_filter/mode: all");
     emit("translator/sentence_quality_boost: -2");
-    emit("translator/enable_transpose: true");
-    emit("translator/transpose_credibility: -8");
-    // 纠错扫描窗口（bug#26 韵母盲区修复，2026-11-07 收编）：4 覆盖韵母
-    // 起始区（zhne→真的类错字可达）。六门验证：案例矩阵/d1/d3/d5/T 维/
-    // 显微镜/延迟（全新用户两臂同分布，窗口零成本）。
-    emit("translator/correction_scan_window: 4");
-    emit("translator/enable_deletion: true");
-    emit("translator/deletion_credibility: -8");
-    emit("translator/enable_substitution: true");
-    emit("translator/substitution_credibility: -8");
-    emit("translator/enable_insertion: true");
-    emit("translator/insertion_credibility: -8");
-    emit("translator/typo_second_pass: true");
-    emit("translator/typo_second_pass_max_input_length: 12");
-    emit("translator/typo_second_pass_insert_after: 5");
   }
+  // 纠错四边（换位/多打/错键/漏打）不依赖 gram，无 gram 也要开
+  // （2026-11-07 修复：此前绑在 gram 检测的 if 里，std/lite/wiki 三档
+  // 的 gram 因 <50MB 门槛未加载时，纠错功能整块被跳过——用户真机
+  // 实报 zhnedebulai 不纠的根因）。
+  emit("translator/enable_transpose: true");
+  emit("translator/transpose_credibility: -8");
+  // 纠错扫描窗口（bug#26 韵母盲区修复）：4 覆盖韵母起始区。
+  emit("translator/correction_scan_window: 4");
+  // 词首多打删除（hshangxian→上限/上线 类，用户 11-07 实报）：
+  // 首遍限定词首单边，垃圾边风险有界；全量守卫随 60-计划 Day2。
+  emit("translator/enable_word_initial_deletion: true");
+  emit("translator/enable_deletion: true");
+  emit("translator/deletion_credibility: -8");
+  emit("translator/enable_substitution: true");
+  emit("translator/substitution_credibility: -8");
+  emit("translator/enable_insertion: true");
+  emit("translator/insertion_credibility: -8");
+  emit("translator/typo_second_pass: true");
+  emit("translator/typo_second_pass_max_input_length: 12");
+  emit("translator/typo_second_pass_insert_after: 5");
   if (lines == 0) return "";
   return body;
 }
