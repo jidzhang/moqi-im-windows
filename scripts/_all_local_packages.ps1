@@ -101,6 +101,9 @@ if (Test-Path -LiteralPath $stageLite) { Remove-Item -LiteralPath $stageLite -Re
 Copy-Item -LiteralPath $stageDir -Destination $stageLite -Recurse
 Copy-Item -LiteralPath (Join-Path $daemonLiteBuild "Release\MoqiDaemon.exe") `
     -Destination (Join-Path $stageLite "win32\MoqiIM\MoqiDaemon.exe") -Force
+# Lite 去掉 Notepad2：配置编辑菜单已裁，notepad2.exe 零消费者（2026-11-08）。
+$notepad2InLite = Join-Path $stageLite "win32\MoqiIM\Notepad2"
+if (Test-Path -LiteralPath $notepad2InLite) { Remove-Item -LiteralPath $notepad2InLite -Recurse -Force }
 & $buildInstaller -StageDir $stageLite `
     -OutputName "moqi-im-windows-setup-lite" `
     -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `

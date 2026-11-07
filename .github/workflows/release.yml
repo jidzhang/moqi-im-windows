@@ -252,6 +252,10 @@ jobs:
           Copy-Item installer/stage installer/stage-lite -Recurse
           Copy-Item moqi-daemon/build-x86-lite/Release/MoqiDaemon.exe `
             installer/stage-lite/win32/MoqiIM/MoqiDaemon.exe -Force
+          # Lite 不带 Notepad2（配置编辑菜单已裁，零消费者）。
+          if (Test-Path installer/stage-lite/win32/MoqiIM/Notepad2) {
+            Remove-Item installer/stage-lite/win32/MoqiIM/Notepad2 -Recurse -Force
+          }
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
             -StageDir ./installer/stage-lite -OutputName moqi-im-windows-setup-lite `
             -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
