@@ -104,6 +104,15 @@ Copy-Item -LiteralPath (Join-Path $daemonLiteBuild "Release\MoqiDaemon.exe") `
 # Lite 去掉 Notepad2：配置编辑菜单已裁，notepad2.exe 零消费者（2026-11-08）。
 $notepad2InLite = Join-Path $stageLite "win32\MoqiIM\Notepad2"
 if (Test-Path -LiteralPath $notepad2InLite) { Remove-Item -LiteralPath $notepad2InLite -Recurse -Force }
+# Lite 去掉 AI 配置与文件模板：AI 已编译期剔除，ai_config.json 无读者；
+# templates\ 只服务置顶短语/超级简拼菜单（Lite 已裁，成对符号设置 222 用
+# 内置回退头，不依赖模板）。backends.json/ime.json/icons 是注册链必需，
+# 全量与 lite 都必须保留。
+$liteRimeRoot = Join-Path $stageLite "win32\MoqiIM\moqi-ime\input_methods\rime"
+foreach ($liteRemove in @("ai_config.json", "templates")) {
+    $litePath = Join-Path $liteRimeRoot $liteRemove
+    if (Test-Path -LiteralPath $litePath) { Remove-Item -LiteralPath $litePath -Recurse -Force }
+}
 & $buildInstaller -StageDir $stageLite `
     -OutputName "moqi-im-windows-setup-lite" `
     -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
