@@ -356,11 +356,15 @@ void writeFileUtf8(const wstring& path, const string& content) {
 // udbtest 双进程交叉提交验证，见 24-交接）。进程内学习即时生效，跨进程
 // 学习在对方下次启动时可见。
 namespace {
-// Go grammar_model.go：auto 扫描 shared/user 目录，取 >=50MB 的最大 .gram。
+// auto 扫描 shared/user 目录，取最大的 .gram（2026-11-07 修复：
+// 原 Go 时代 50MB 门槛把 std/lite/wiki 三档随包 gram 全部挡在门外。
+// 实测哪怕 1KB dummy gram 也能激活 contextual_suggestions +
+// sentence_quality_boost 通路提升整句——门槛无意义，有 .gram 就用，
+// 多个并存取最大，用户目录的大 gram 优先于安装目录）。
 string detectAutoGrammar(const vector<wstring>& dirs) {
   string best;
   uintmax_t bestSize = 0;
-  const uintmax_t kMin = 50ull << 20;
+  const uintmax_t kMin = 1;
   for (const auto& dir : dirs) {
     if (dir.empty()) continue;
     error_code ec;
