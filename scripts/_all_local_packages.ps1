@@ -85,10 +85,23 @@ if ($ProtobufSourceDir) { $allArgs.ProtobufSourceDir = $ProtobufSourceDir }
 if ($Version) { $allArgs.Version = $Version }
 & $allIn @allArgs
 
-Write-Host "== Tier 2/5: lite (1.1MB essay-crop gram: top-100k pairs) =="
+Write-Host "== Tier 2/5: lite (compiled-out AI/cloud + 1.1MB gram) =="
 $LiteGram = Join-Path $RepoRoot "installer\dist\zh-moqi-lite.gram"
 if (-not (Test-Path -LiteralPath $LiteGram)) { throw "lite gram not found: $LiteGram" }
-& $buildInstaller -StageDir $stageDir `
+# Lite = 全量 stage 换 lite daemon（MOQI_LITE 编译期剔除 AI/云剪贴板/WebDAV/
+# 剪贴板监视；TSF DLL 无需 lite 变体——执行与菜单全在 daemon 侧）。
+$daemonDir = Join-Path $RepoRoot "moqi-daemon"
+$daemonLiteBuild = Join-Path $daemonDir "build-x86-lite"
+& cmake -S $daemonDir -B $daemonLiteBuild -G $Generator -A Win32 -DMOQI_LITE=ON
+if ($LASTEXITCODE -ne 0) { throw "lite daemon configure failed" }
+& cmake --build $daemonLiteBuild --config Release --target MoqiDaemon
+if ($LASTEXITCODE -ne 0) { throw "lite daemon build failed" }
+$stageLite = Join-Path $RepoRoot "installer\stage-lite"
+if (Test-Path -LiteralPath $stageLite) { Remove-Item -LiteralPath $stageLite -Recurse -Force }
+Copy-Item -LiteralPath $stageDir -Destination $stageLite -Recurse
+Copy-Item -LiteralPath (Join-Path $daemonLiteBuild "Release\MoqiDaemon.exe") `
+    -Destination (Join-Path $stageLite "win32\MoqiIM\MoqiDaemon.exe") -Force
+& $buildInstaller -StageDir $stageLite `
     -OutputName "moqi-im-windows-setup-lite" `
     -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
     -GramPath $LiteGram

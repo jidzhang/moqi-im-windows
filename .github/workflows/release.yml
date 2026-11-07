@@ -236,11 +236,24 @@ jobs:
             -GramPath $grams.std -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'standard tier failed' }
 
-          # lite 档：1.1MB essay 裁剪 gram（top-10 万高频词对，延续增强）
+          # lite 档：编译期剔除 AI/云剪贴板/WebDAV（MOQI_LITE daemon）+
+          # 1.1MB essay 裁剪 gram。lite daemon 从独立构建目录产出，stage-lite
+          # = 全量 stage 换 lite MoqiDaemon.exe（TSF DLL 无需 lite 变体）。
           # Excludes 里的路径必须用反斜杠（Inno 的 [Files] Excludes 按 Windows 分隔符匹配，
           # 正斜杠不生效 → 预编译词库缓存剔不掉，lite 白胖 40MB）。
+          cmake -S moqi-daemon -B moqi-daemon/build-x86-lite `
+            -G "Visual Studio 17 2022" -A Win32 -DMOQI_LITE=ON
+          if ($LASTEXITCODE -ne 0) { throw 'lite daemon configure failed' }
+          cmake --build moqi-daemon/build-x86-lite --config Release --target MoqiDaemon
+          if ($LASTEXITCODE -ne 0) { throw 'lite daemon build failed' }
+          if (Test-Path installer/stage-lite) {
+            Remove-Item installer/stage-lite -Recurse -Force
+          }
+          Copy-Item installer/stage installer/stage-lite -Recurse
+          Copy-Item moqi-daemon/build-x86-lite/Release/MoqiDaemon.exe `
+            installer/stage-lite/win32/MoqiIM/MoqiDaemon.exe -Force
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
-            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-lite `
+            -StageDir ./installer/stage-lite -OutputName moqi-im-windows-setup-lite `
             -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
             -GramPath $grams.lite -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'lite tier failed' }

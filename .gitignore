@@ -56,6 +56,8 @@ build64-*
 cmake-build-ninja
 
 installer/stage
+installer/stage-lite
+Thumbs.db
 installer/distdebug.log
 installer/dbg-gramarm/
 debug.log
