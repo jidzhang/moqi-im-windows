@@ -12,7 +12,7 @@
   Optional path to MoqiTsf.iss (default: installer dir next to this script).
 
 .EXAMPLE
-  .\installer\build-installer.ps1 -StageDir D:\moqi-im-windows\installer\stage
+  .\installer\build-installer.ps1 -StageDir .\installer\stage
 #>
 param(
     [Parameter(Mandatory = $true)]

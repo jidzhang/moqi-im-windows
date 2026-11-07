@@ -96,10 +96,6 @@ function Resolve-ProtobufRoot {
   if (-not [string]::IsNullOrWhiteSpace($env:MOQI_PROTOBUF_ROOT)) {
     $candidates += $env:MOQI_PROTOBUF_ROOT
   }
-  $defaultRoot = "D:\a_dev\protoc-33.5-win64"
-  if (Test-Path -LiteralPath $defaultRoot) {
-    $candidates += $defaultRoot
-  }
 
   foreach ($candidate in $candidates) {
     if ([string]::IsNullOrWhiteSpace($candidate)) {

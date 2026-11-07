@@ -113,11 +113,10 @@ $windowsInstallScript = Join-Path $RepoRoot "scripts\install.ps1"
 $moqiImeRuntimeDir = Join-Path $MoqiImeRoot "scripts\build\moqi-ime"
 
 if (-not $ProtobufRoot) {
+    # protoc 发现顺序：环境变量 MOQI_PROTOBUF_ROOT → 用户缓存
+    # %USERPROFILE%\.cache\moqi-protobuf → CMake FetchContent 兜底现编。
+    # （2026-11-07 移植性清理：删除原机器专属默认盘路径。）
     $candidatePaths = @()
-    $defaultRoot = "D:\a_dev\protoc-33.5-win64"
-    if (Test-Path -LiteralPath $defaultRoot) {
-        $candidatePaths += $defaultRoot
-    }
     if (-not [string]::IsNullOrWhiteSpace($env:MOQI_PROTOBUF_ROOT)) {
         $candidatePaths += $env:MOQI_PROTOBUF_ROOT
     }
