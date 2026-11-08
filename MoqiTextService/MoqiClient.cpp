@@ -425,10 +425,22 @@ void Client::addKeyEventToRpcRequest(Json::Value &request,
   keyEvent2["isExtended"] = keyEvent.isExtended();
   Json::Value states(Json::arrayValue);
   const BYTE *keyStates = keyEvent.keyStates();
+  // 全零快照省略整个数组（2026-11-08 画像实测：256 节点占每键请求解析的
+  // 大头，ABBA 实测省略后墙钟 -18%）。daemon 侧 keyDataFromJson 对缺省
+  // 字段本就按全零处理，两侧语义一致；非全零（修饰键按住）仍全量发送。
+  bool anyKeyStateNonZero = false;
   for (int i = 0; i < 256; ++i) {
-    states.append(keyStates[i]);
+    if (keyStates[i] != 0) {
+      anyKeyStateNonZero = true;
+      break;
+    }
   }
-  keyEvent2["keyStates"] = states;
+  if (anyKeyStateNonZero) {
+    for (int i = 0; i < 256; ++i) {
+      states.append(keyStates[i]);
+    }
+    keyEvent2["keyStates"] = states;
+  }
   request["keyEvent"] = keyEvent2;
 }
 

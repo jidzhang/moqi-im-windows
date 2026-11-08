@@ -26,7 +26,7 @@ BEGIN
             VALUE "FileDescription", "墨奇输入法"
             VALUE "FileVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
             VALUE "InternalName", "MoqiLaunch.exe"
-            VALUE "LegalCopyright", "Copyright (C) 2013-2016 Moqi developers"
+            VALUE "LegalCopyright", "Copyright (C) 2013-2026 Moqi developers"
             VALUE "OriginalFilename", "MoqiLaunch.exe"
             VALUE "ProductName", "墨奇输入法"
             VALUE "ProductVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"

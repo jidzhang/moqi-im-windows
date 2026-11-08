@@ -78,7 +78,7 @@ BEGIN
             VALUE "FileDescription", "墨奇输入法"
             VALUE "FileVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
             VALUE "InternalName", "MoqiTextService.dll"
-            VALUE "LegalCopyright", "Copyright (C) 2013-2016 Moqi developers"
+            VALUE "LegalCopyright", "Copyright (C) 2013-2026 Moqi developers"
             VALUE "OriginalFilename", "MoqiTextService.dll"
             VALUE "ProductName", "墨奇输入法"
             VALUE "ProductVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
