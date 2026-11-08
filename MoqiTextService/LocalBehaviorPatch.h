@@ -101,6 +101,11 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
   emit("translator/typo_second_pass: true");
   emit("translator/typo_second_pass_max_input_length: 12");
   emit("translator/typo_second_pass_insert_after: 5");
+  // 竞争晋升（compete v2，2026-11-08 用户裁决采纳）：二遍最优纠错候选
+  // quality≥2（顶层质量档）时晋升 #1。错字维度 top1 +15~21，正常输入
+  // d1/d4/d5 逐位零扰动、真机黑盒 100 例逐例一致；代价 d2 −0.25、
+  // d3 native −0.15（ime 0）。证据=62 §二十二-二十三。
+  emit("translator/typo_second_pass_compete_floor: 2");
   if (lines == 0) return "";
   return body;
 }
