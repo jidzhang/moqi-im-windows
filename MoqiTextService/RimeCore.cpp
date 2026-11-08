@@ -446,7 +446,14 @@ string buildInProcCustomPatch(const wstring& backendUserDir,
       readFileUtf8(backendUserDir + L"\\rime_frost.custom.yaml");
   string body = buildLocalBehaviorPatch(sharedDataDir);
   if (body.empty()) body = "# managed by moqi local engine\npatch:\n";
-  if (!backendPatch.empty()) {
+  // 单引擎架构（2026-11-04）后 daemon 的 backendUserDir 与写入目标常为同一
+  // 目录——把本工具旧输出合并回新块等于每次启动追加一块，且 YAML 重复键
+  // 后者生效，lite→std 覆盖升级后旧档 grammar/language（zh-moqi-lite）永远
+  // 压住新档，std 引擎每会话报 gram 缺失 ERROR（2026-11-08 实测 17 块
+  // 堆积+15 套 glog 三件套）。托管文件全量由生成器接管；仅无 marker 的
+  // 用户 custom yaml（方案集目录，如雾凇）仍合并。
+  if (!backendPatch.empty() &&
+      backendPatch.rfind("# managed by moqi", 0) != 0) {
     istringstream stream(backendPatch);
     string line;
     while (getline(stream, line)) {
@@ -943,7 +950,12 @@ void RimeRuntime::requestInit(const wstring& programDir,
     } else {
       const string patch = buildInProcCustomPatch(backendUserDir, sharedDir);
       const wstring patchPath = userDir + L"\\rime_frost.custom.yaml";
-      if (readFileUtf8(patchPath) != patch) {
+      const string existing = readFileUtf8(patchPath);
+      if (!existing.empty() &&
+          existing.rfind("# managed by moqi", 0) != 0) {
+        // 用户手工维护的同名文件不覆盖（与 Go writeFrostCustomPatch 同
+        // 语义；雾凇整包场景由上方 userOwnsDefault 分支处理）。
+      } else if (existing != patch) {
         writeFileUtf8(patchPath, patch);
       }
     }
