@@ -25,6 +25,13 @@ jobs:
         shell: powershell
 
     steps:
+      # runner 镜像 git 默认 autocrlf=true，会把 LF blob 检出成 CRLF 工作区，
+      # 文本数据（词典/tsv/lua）全带 \r 进安装包（v2.0.0 首发 lite 实测原始
+      # 负载 +3.3MB）。必须在 checkout 之前关掉；rime-frost 上游子模块的
+      # 检出也靠这里覆盖（.gitattributes 进不了上游）。
+      - name: Force LF checkout
+        run: git config --global core.autocrlf false
+
       - name: Checkout moqi-im-windows
         uses: actions/checkout@v4
         with:

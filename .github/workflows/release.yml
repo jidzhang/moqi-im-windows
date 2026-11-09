@@ -32,6 +32,12 @@ jobs:
         shell: powershell
 
     steps:
+      # runner 镜像 git 默认 autocrlf=true，会把 LF blob 检出成 CRLF 工作区，
+      # 文本数据（词典/tsv/lua）全带 \r 进安装包。必须在 checkout 之前关掉；
+      # rime-frost 上游子模块的检出也靠这里覆盖（.gitattributes 进不了上游）。
+      - name: Force LF checkout
+        run: git config --global core.autocrlf false
+
       - name: Resolve version from tag
         id: version
         env:
@@ -252,9 +258,18 @@ jobs:
           Copy-Item installer/stage installer/stage-lite -Recurse
           Copy-Item moqi-daemon/build-x86-lite/Release/MoqiDaemon.exe `
             installer/stage-lite/win32/MoqiIM/MoqiDaemon.exe -Force
-          # Lite 不带 Notepad2（配置编辑菜单已裁，零消费者）。
+          # Lite 不带 Notepad2（配置编辑菜单已裁，零消费者）；也不带
+          # ai_config.json 与 templates\（MOQI_LITE 下 AI 编译期剔除无读者、
+          # 模板服务的菜单已裁）——与本地 _all_local_packages.ps1 同构
+          #（27136a7 曾漏同步这里，v2.0.0 首发 lite 因此多带死数据）。
           if (Test-Path installer/stage-lite/win32/MoqiIM/Notepad2) {
             Remove-Item installer/stage-lite/win32/MoqiIM/Notepad2 -Recurse -Force
+          }
+          foreach ($liteStrip in @('ai_config.json', 'templates')) {
+            $p = "installer/stage-lite/win32/MoqiIM/moqi-ime/input_methods/rime/$liteStrip"
+            if (Test-Path $p) {
+              Remove-Item $p -Recurse -Force
+            }
           }
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
             -StageDir ./installer/stage-lite -OutputName moqi-im-windows-setup-lite `
