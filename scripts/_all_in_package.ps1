@@ -195,6 +195,25 @@ if ($ProtobufRoot) {
 }
 Invoke-Step -FilePath "powershell.exe" -ArgumentList $windowsBuildArgs -WorkingDirectory $RepoRoot
 
+# Step 2b/3: Build MoqiDaemon (x86). install.ps1 (Step 3) stages the existing
+# build-x86 exe -- nothing else in the local chain compiles the full daemon
+# (build.ps1 covers the TSF DLL only; only the lite tier rebuilds its own
+# daemon). Without this step, daemon source edits or version bumps are
+# silently packaged as STALE binaries (2026-11-10: a local 2.0.1 five-tier
+# pass shipped daemon 2.0.0 in all four full tiers). CI is isomorphic: its
+# explicit "Build MoqiDaemon (x86)" step makes this an incremental no-op
+# there. version.txt is settled above and the daemon embeds it into its
+# version resource at configure time, so the order here matters.
+$daemonDir = Join-Path $RepoRoot "moqi-daemon"
+if (-not (Test-Path -LiteralPath (Join-Path $daemonDir "CMakeLists.txt"))) {
+    throw "moqi-daemon sources not found: $daemonDir"
+}
+Write-Host "== Step 2b/3: Build MoqiDaemon (x86) =="
+& cmake -S $daemonDir -B (Join-Path $daemonDir "build-x86") -G $Generator -A Win32
+if ($LASTEXITCODE -ne 0) { throw "MoqiDaemon configure failed" }
+& cmake --build (Join-Path $daemonDir "build-x86") --config Release --target MoqiDaemon
+if ($LASTEXITCODE -ne 0) { throw "MoqiDaemon build failed" }
+
 Write-Host "== Step 3/3: Build installer package =="
 $installArgs = @(
     "-NoProfile",
