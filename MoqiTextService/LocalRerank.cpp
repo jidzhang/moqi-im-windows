@@ -571,6 +571,12 @@ TypoMemoryStore& TypoMemoryStore::instance() {
   return store;
 }
 
+TypoMemoryStore::~TypoMemoryStore() {
+  // Own shutdown persistence: global clients may outlive this singleton.
+  // Never let an exception escape a process-shutdown destructor.
+  try { flush(); } catch (...) {}
+}
+
 void TypoMemoryStore::ensureLoaded(const string& appDataRoot) {
   lock_guard<mutex> lock(mutex_);
   path_ = appDataRoot + "/" + kTypoMemoryFileName;
@@ -636,9 +642,17 @@ void TypoMemoryStore::saveLocked() {
                 ios::binary | ios::trunc);
   if (!file) return;
   file.write(body.data(), static_cast<streamsize>(body.size()));
+  file.flush();
+  file.close();
+  if (file.fail()) return; // Keep dirty rows for a later retry.
   const uint64_t mtime = fileMtime(path_);
   if (mtime != 0) loadedMtime_ = mtime;
   dirty_ = 0;
+}
+
+void TypoMemoryStore::flush() {
+  lock_guard<mutex> lock(mutex_);
+  if (dirty_ > 0) saveLocked();
 }
 
 void TypoMemoryStore::record(const string& rawIn, const string& textIn) {

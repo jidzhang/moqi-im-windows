@@ -45,6 +45,10 @@ string wideToUtf8(const wchar_t* text) {
 // ---------------------------------------------------------------- paths --
 
 wstring appDataRoamingDir() {
+  // Test isolation must cover shared config and typo memory, not only userdb.
+  // Production does not set this existing test-only override.
+  const wchar_t* isolated = _wgetenv(L"MOQI_USER_DATA_DIR");
+  if (isolated && *isolated) return isolated;
   wchar_t* appData = nullptr;
   if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr,
                                        &appData))) {
@@ -56,6 +60,9 @@ wstring appDataRoamingDir() {
 }
 
 wstring localAppDataDir() {
+  // Keep test logging under the same authorized isolated root.
+  const wchar_t* isolated = _wgetenv(L"MOQI_USER_DATA_DIR");
+  if (isolated && *isolated) return isolated;
   wchar_t* appData = nullptr;
   if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
                                        &appData))) {

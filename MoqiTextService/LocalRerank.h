@@ -115,8 +115,11 @@ std::vector<int> buildDisplayPerm(const std::vector<Cand>& engineOrder,
 class TypoMemoryStore {
 public:
   static TypoMemoryStore& instance();
+  ~TypoMemoryStore();
   void ensureLoaded(const std::string& appDataRoot);
   void record(const std::string& raw, const std::string& text);
+  // Persist pending rows at session boundaries, outside the per-key hot path.
+  void flush();
   std::string lookup(const std::string& raw);
 
 private:
