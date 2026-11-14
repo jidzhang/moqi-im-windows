@@ -109,7 +109,9 @@ if (Test-Path -LiteralPath $notepad2InLite) { Remove-Item -LiteralPath $notepad2
 # 内置回退头，不依赖模板）。backends.json/ime.json/icons 是注册链必需，
 # 全量与 lite 都必须保留。
 $liteRimeRoot = Join-Path $stageLite "win32\MoqiIM\moqi-ime\input_methods\rime"
-foreach ($liteRemove in @("ai_config.json", "templates")) {
+# cloudclipboard 是云剪贴板数据目录：Lite 编译期剔除云功能后无消费者，空目录
+# 也不带（2026-11-14 用户实报）；全量档保留（云剪贴板运行时用）。
+foreach ($liteRemove in @("ai_config.json", "templates", "cloudclipboard")) {
     $litePath = Join-Path $liteRimeRoot $liteRemove
     if (Test-Path -LiteralPath $litePath) { Remove-Item -LiteralPath $litePath -Recurse -Force }
 }

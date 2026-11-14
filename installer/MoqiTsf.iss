@@ -162,22 +162,6 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, R);
 end;
 
-procedure TryKillBackendServers;
-var
-  R: Integer;
-begin
-  // 后端（v1.5.0 起叫 MoqiIME.exe，旧版叫 server.exe）在启动器已退出时是
-  // 孤儿进程，不在其进程树里；留着它会继续用旧代码/旧数据服务客户端，
-  // 且锁住 exe 使覆盖安装写不进新文件。
-  // 按路径过滤只杀本安装目录下的后端，避免误杀其他软件的同名进程。
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -ExecutionPolicy Bypass -Command "' +
-    'Get-Process MoqiIME,server -ErrorAction SilentlyContinue |' +
-    ' Where-Object { $_.Path -like ''' + ExpandConstant('{app}') + '\*'' } |' +
-    ' Stop-Process -Force"',
-    '', SW_HIDE, ewWaitUntilTerminated, R);
-end;
-
 procedure DeleteLegacyAutorunValue;
 begin
   // v1.6.0 起运行键值名 MoqiLaunch；旧名留着会变成指向已删 exe 的死启动项。
@@ -190,7 +174,9 @@ begin
   TryKillProcessImage('MoqiDaemon.exe');
 TryKillProcessImage('MoqiLaunch.exe');
   TryKillProcessImage('MoqiLauncher.exe');
-  TryKillBackendServers;
+  // 旧版 Go 后端（MoqiIME.exe/server.exe）的按路径查杀已挪进 SetupHelper
+  // 原生实现（RunInstall/RunUninstall），不再用 PowerShell——后者带
+  // -ExecutionPolicy Bypass 会被 360 等杀软启发式拦截（用户实报）。
 end;
 
 function GetSetupHelperPath: string;

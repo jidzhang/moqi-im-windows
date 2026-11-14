@@ -131,8 +131,12 @@ function Copy-MoqiImeRuntime {
     # stays required.
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
 
+    # input_methods/rime/test 是退休 Go 后端的测试源码目录（纯 .go）：文件阶段
+    # 排除 .go 后只剩空壳。所有档位都不该带 test 空目录（2026-11-14 用户实报），
+    # 在打包源头剔除，不给安装器加清理逻辑。
     $directories = Get-ChildItem -Path $SourceRoot -Recurse -Force -Directory |
-    Where-Object { $_.FullName -notmatch '[\\/]\.git(?:[\\/]|$)' }
+    Where-Object { $_.FullName -notmatch '[\\/]\.git(?:[\\/]|$)' -and
+                   $_.FullName -notmatch '[\\/]input_methods[\\/]rime[\\/]test(?:[\\/]|$)' }
     foreach ($directory in $directories) {
         $relativePath = $directory.FullName.Substring($SourceRoot.Length).TrimStart('\', '/')
         $targetDir = Join-Path $DestinationRoot $relativePath
@@ -142,7 +146,8 @@ function Copy-MoqiImeRuntime {
     $files = Get-ChildItem -Path $SourceRoot -Recurse -Force -File | Where-Object {
         $_.Extension -ne ".go" -and
         $_.Name -ne "MoqiIME.exe" -and
-        $_.FullName -notmatch '[\\/]\.git(?:[\\/]|$)'
+        $_.FullName -notmatch '[\\/]\.git(?:[\\/]|$)' -and
+        $_.FullName -notmatch '[\\/]input_methods[\\/]rime[\\/]test(?:[\\/]|$)'
     }
     foreach ($file in $files) {
         $relativePath = $file.FullName.Substring($SourceRoot.Length).TrimStart('\', '/')

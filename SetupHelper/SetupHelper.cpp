@@ -1,5 +1,7 @@
 #include <windows.h>
 
+#include <TlHelp32.h>
+
 #include <ShlObj.h>
 #include <shellapi.h>
 
@@ -835,8 +837,55 @@ void ClearDefaultInputMethodOverrideIfOurs() {
   }
 }
 
+// 覆盖安装/卸载时杀掉旧版 Go 后端孤儿进程（MoqiIME.exe / server.exe，
+// 2026-11-03 已退休）：它不在启动器进程树里，留着会继续用旧代码服务客户端。
+// 按安装路径前缀过滤，只杀本目录下的后端，避免误杀其他软件的同名进程
+// （server.exe 是通用名）。原生实现，替代安装脚本里会被杀软启发式拦截的
+// PowerShell -ExecutionPolicy Bypass 调用（360「利用PowerShell执行可疑脚本」）。
+void KillLegacyBackendServers(const fs::path& app_dir) {
+  std::wstring prefix = app_dir.wstring();
+  if (!prefix.empty() && prefix.back() != L'\\') {
+    prefix += L'\\';
+  }
+
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  PROCESSENTRY32W entry = {};
+  entry.dwSize = sizeof(entry);
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      if (_wcsicmp(entry.szExeFile, L"MoqiIME.exe") != 0 &&
+          _wcsicmp(entry.szExeFile, L"server.exe") != 0) {
+        continue;
+      }
+      HANDLE process = OpenProcess(
+          PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE,
+          entry.th32ProcessID);
+      if (process == nullptr) {
+        continue;
+      }
+      std::wstring image_path(32768, L'\0');
+      DWORD size = static_cast<DWORD>(image_path.size());
+      if (QueryFullProcessImageNameW(process, 0, image_path.data(), &size)) {
+        image_path.resize(size);
+        if (_wcsnicmp(image_path.c_str(), prefix.c_str(), prefix.length()) == 0) {
+          TerminateProcess(process, 0);
+          LogSetupLine(L"KillLegacyBackend: terminated " +
+                       std::wstring(entry.szExeFile) + L" pid=" +
+                       std::to_wstring(entry.th32ProcessID));
+        }
+      }
+      CloseHandle(process);
+    } while (Process32NextW(snapshot, &entry));
+  }
+  CloseHandle(snapshot);
+}
+
 int RunInstall(const Options& options) {
   const fs::path app_dir(options.app_dir);
+  KillLegacyBackendServers(app_dir);
   const fs::path source32 = app_dir / L"MoqiTextService.dll";
   const fs::path source64 = app_dir / L"x64" / L"MoqiTextService.dll";
   // TSF DLLs must live in system directories, or IME input will not work in
@@ -950,6 +999,7 @@ int RunInstall(const Options& options) {
 
 int RunUninstall(const Options& options) {
   const fs::path app_dir(options.app_dir);
+  KillLegacyBackendServers(app_dir);
   const fs::path dest32 = fs::path(GetSyswow64DirectoryPath()) / L"MoqiTextService.dll";
   const fs::path dest64 = fs::path(GetNativeSystemDirectoryPath()) / L"MoqiTextService.dll";
   const fs::path dest64_for_regsvr =

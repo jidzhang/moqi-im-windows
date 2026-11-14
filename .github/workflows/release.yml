@@ -260,12 +260,14 @@ jobs:
             installer/stage-lite/win32/MoqiIM/MoqiDaemon.exe -Force
           # Lite 不带 Notepad2（配置编辑菜单已裁，零消费者）；也不带
           # ai_config.json 与 templates\（MOQI_LITE 下 AI 编译期剔除无读者、
-          # 模板服务的菜单已裁）——与本地 _all_local_packages.ps1 同构
-          #（27136a7 曾漏同步这里，v2.0.0 首发 lite 因此多带死数据）。
+          # 模板服务的菜单已裁）；cloudclipboard 云剪贴板目录 Lite 无消费者
+          # 同样剔除（空目录也不带，2026-11-14 用户实报）——与本地
+          # _all_local_packages.ps1 同构（27136a7 曾漏同步这里，v2.0.0 首发
+          # lite 因此多带死数据）。
           if (Test-Path installer/stage-lite/win32/MoqiIM/Notepad2) {
             Remove-Item installer/stage-lite/win32/MoqiIM/Notepad2 -Recurse -Force
           }
-          foreach ($liteStrip in @('ai_config.json', 'templates')) {
+          foreach ($liteStrip in @('ai_config.json', 'templates', 'cloudclipboard')) {
             $p = "installer/stage-lite/win32/MoqiIM/moqi-ime/input_methods/rime/$liteStrip"
             if (Test-Path $p) {
               Remove-Item $p -Recurse -Force
