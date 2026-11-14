@@ -102,6 +102,10 @@ std::wstring hwndToString(HWND hwnd) {
 }
 
 void logCandidateWindowState(const std::wstring& tag, HWND hwnd) {
+    // 提前门控：trace 关闭时跳过 8 个 Win32 查询 + wostringstream 构造（每键路径）。
+    if (!Ime::isTraceLoggingEnabled()) {
+        return;
+    }
     if (!hwnd) {
         appendCandidateWindowLog(tag + L" hwnd=<null>");
         return;
@@ -171,18 +175,20 @@ void enforceCandidateWindowTopmost(HWND hwnd, bool showWindow, const wchar_t* re
 
     ::SetLastError(0);
     const BOOL ok = ::SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
-    const DWORD error = ok ? 0 : ::GetLastError();
 
-    std::wostringstream log;
-    log << L"[enforceCandidateWindowTopmost] reason=" << reason
-        << L" hwnd=" << hwndToString(hwnd)
-        << L" show=" << (showWindow ? L"true" : L"false")
-        << L" ok=" << (ok ? L"true" : L"false");
-    if (!ok) {
-        log << L" last_error=" << error;
+    if (Ime::isTraceLoggingEnabled()) {
+        const DWORD error = ok ? 0 : ::GetLastError();
+        std::wostringstream log;
+        log << L"[enforceCandidateWindowTopmost] reason=" << reason
+            << L" hwnd=" << hwndToString(hwnd)
+            << L" show=" << (showWindow ? L"true" : L"false")
+            << L" ok=" << (ok ? L"true" : L"false");
+        if (!ok) {
+            log << L" last_error=" << error;
+        }
+        appendCandidateWindowLog(log.str());
+        logCandidateWindowState(L"[CandidateWindow::state]", hwnd);
     }
-    appendCandidateWindowLog(log.str());
-    logCandidateWindowState(L"[CandidateWindow::state]", hwnd);
 }
 
 HWND resolveCandidateOwnerWindow(Ime::EditSession* session) {

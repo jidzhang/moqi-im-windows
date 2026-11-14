@@ -17,6 +17,16 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cxx_fl
 
 project(MoqiIMWindows LANGUAGES C CXX)
 
+# 空间优化：/Gy 函数级链接 + 链接期 /OPT:REF,ICF 死代码消除/相同 COMDAT 折叠。
+# 上方 flag override 的 Release 只给 /O2 /Ob2、不含 /Gy，此处补上才能真正按
+# 函数粒度删死代码。LTCG 不启用：TSF 是小项目，每键大头是等 daemon + GDI 系统
+# 调用，LTCG 够得着的自有 CPU 很小，无正收益实测结论（daemon 大代码量才有同源
+# A/B −8%）；不凭信心启用。PGO 已证慢 7-10%（56-交接），不启用。
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Gy")
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Gy")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /OPT:REF /OPT:ICF")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /OPT:REF /OPT:ICF")
+
 # 独立单元测试（MoqiTextService/tests/protocol_json_test.cpp）。
 enable_testing()
 
