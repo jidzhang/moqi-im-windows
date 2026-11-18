@@ -500,10 +500,17 @@ bool applyMixedPairRerank(const string& composition, vector<Cand>& candidates,
   const int maxLen = cfg.pairMaxLen < 2 ? 2 : cfg.pairMaxLen;
 
   const int first = pairScore(pairs, candidates[0].first, maxLen);
+  // 覆盖闸门（2026-11-18 混拼首候选事故）：配对证据只允许把「不比首名
+  // 短」的候选提到第一。首名是引擎排的完整覆盖候选（如 zaiwokl 的
+  // 在我看来），更短的候选（在我）是丢弃简拼尾巴的前缀候选——字级
+  // 高频对（在|我 9708）轻易过 floor，把它顶上去就是把残缺候选当首选。
+  // 原设计场景（shid：时代/是的/使得 同长度）不受影响。
+  const size_t firstRunes = utf8RuneCount(candidates[0].first);
   int wordMassAbove = 0;
   int bestIdx = -1;
   int bestScore = 0;
   for (size_t i = 1; i < candidates.size(); ++i) {
+    if (utf8RuneCount(candidates[i].first) < firstRunes) continue;
     auto wm = wordMass.find(stripMarks(candidates[i - 1].first));
     if (wm != wordMass.end() && wm->second > wordMassAbove) {
       wordMassAbove = wm->second;

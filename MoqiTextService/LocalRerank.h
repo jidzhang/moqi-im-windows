@@ -66,6 +66,19 @@ public:
     return wordMass_;
   }
 
+  // 测试接缝（local_rerank_test）：直接注入配置与表，绕过文件加载；
+  // tsvLoaded_=true 防止后续 ensureLoaded 重读 tsv 覆盖注入内容。
+  void injectForTest(
+      const RerankConfig& cfg,
+      std::unordered_map<std::string, std::unordered_map<std::string, int>> pairs,
+      std::unordered_map<std::string, int> wordMass) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cfg_ = cfg;
+    pairCounts_ = std::move(pairs);
+    wordMass_ = std::move(wordMass);
+    tsvLoaded_ = true;
+  }
+
 private:
   RerankData() = default;
   void loadLocked(const std::string& sharedDataDir,
