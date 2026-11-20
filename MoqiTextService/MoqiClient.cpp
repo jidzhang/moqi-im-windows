@@ -388,7 +388,7 @@ bool parseHexColor(const std::string &text, COLORREF &result) {
 
 Client::Client(TextService *service, REFIID langProfileGuid)
     : textService_(service), guid_{uuidToString(langProfileGuid)},
-      pipe_(INVALID_HANDLE_VALUE), rpcInProgress_(0),
+      pipe_(INVALID_HANDLE_VALUE), serverPid_(0), rpcInProgress_(0),
       activationInProgress_(false), nextSeqNum_(0), isActivated_(false),
       shouldWaitConnection_{true}, handshakeComplete_{false},
       connectAttempts_{MAX_CONNECT_ATTEMPTS},
@@ -402,6 +402,9 @@ Client::~Client(void) {
   if (asyncPollTimerId_ != 0) {
     ::KillTimer(asyncPollTimerWindow_, asyncPollTimerId_);
     asyncPollTimerId_ = 0;
+  }
+  if (asyncPollTimerWindow_ != nullptr) {
+    ::DestroyWindow(asyncPollTimerWindow_);
     asyncPollTimerWindow_ = nullptr;
   }
   // 语言栏按钮不再随 Client 销毁（bug#21）：按钮归 TextService 独占、跨 Client
@@ -1055,6 +1058,10 @@ void Client::onActivate() {
   activationInProgress_.store(false, std::memory_order_release);
   isActivated_ = true;
   connectAttempts_ = MAX_CONNECT_ATTEMPTS;
+  // 激活即挂异步轮询：用户可能切换过来后一个键都不打，直接点工具栏的中字。
+  // 没有这个定时器，daemon 推来的按钮补丁要等下一次按键才被读到
+  //（2026-11-20 用户实报"点击中字语言栏不变，点进编辑框才变"）。
+  refreshAsyncPollTimer();
   // bug#21 现场取证（trace 档）：激活后记录进程级按钮注册表（按钮归
   // TextService 独占，不再随 Client 创建/销毁）。
   {
@@ -1082,9 +1089,15 @@ void Client::onActivate() {
 }
 
 void Client::onDeactivate() {
-  // Fire-and-forget: never block the app's TSF thread waiting for a reply to
-  // a notification (e.g. when the backend is hung at boot).
-  sendRpcNoWait("onDeactivate");
+  // 反激活通知必须真的送到 daemon：它驱动输入工具栏的隐藏
+  //（2026-11-19 用户实报"切换到其他输入法后工具栏不消失"）。
+  //
+  // 这里用 reliable 版（允许一次重连）：daemon 重启过之后旧管道句柄失效，
+  // sendRpcNoWait 会静默丢弃，工具栏就永远不消失。
+  //
+  // 代价是重连可能阻塞 ~1s。可以接受——失活不是热路径（用户已经切走了，
+  // 这一帧没有按键要处理），而丢包的直接后果是工具栏赖着不走。
+  sendRpcNoWaitReliable("onDeactivate");
   // bug#21 取证（trace）：反激活时记录按钮数（常规路径，error 不落）。
   appendRpcTraceLog(L"[langbar] onDeactivate client_buttons=" +
                     std::to_wstring(textService_ ? textService_->langBarButtonCount() : 0));
@@ -1496,6 +1509,30 @@ bool Client::onCommand(UINT id, Ime::TextService::CommandType type) {
   req["commandId"] = id;
   req["commandType"] = static_cast<int>(type);
 
+  // 转发前把前台权限转授给 daemon（2026-11-19）：命令里有一类会弹窗或拉起
+  // 外部程序（重新部署的结果提示框、打开 ai_config.json 的记事本、打开
+  // 文件夹/网页）。daemon 是纯后台进程，自己永远拿不到前台权限，于是那些
+  // 窗口被用户当前应用压住，看起来像"点了没反应"（Win10 实报；Win7 上因为
+  // 走托盘菜单、daemon 自己 SetForegroundWindow 过才恰好正常）。
+  //
+  // 宿主（本进程）通常正处前台，由它授权才有效。只对可能弹窗的命令授权，
+  // 纯按键路径不付这个系统调用。
+  {
+    const int cmd = static_cast<int>(id);
+    // 维护/打开类（部署、更新、各"打开 xx"、AI 配置、皮肤导入、云剪贴板）
+    // + 方案集/方案切换（可能触发部署提示）。开关与外观类不弹窗，跳过。
+    const bool mayPopup = cmd == 10 || cmd == 17 || cmd == 18 || cmd == 19 ||
+                          cmd == 21 || cmd == 22 || cmd == 23 || cmd == 30 ||
+                          cmd == 32 || cmd == 33 || cmd == 222 || cmd == 226 ||
+                          cmd == 215 || (cmd >= 5001 && cmd <= 5004);
+    if (mayPopup) {
+      const unsigned long daemonPid = serverPid_.load();
+      if (daemonPid != 0) {
+        ::AllowSetForegroundWindow(daemonPid);
+      }
+    }
+  }
+
   Json::Value ret;
   callRpcMethod(req, ret);
   if (handleRpcResponse(ret, nullptr, false)) {
@@ -1632,6 +1669,11 @@ static HMENU menuFromJson(const Json::Value &menuInfo) {
   return menu;
 }
 
+// 工具栏用：与语言栏菜单同一条转换路径（避免两套渲染漂移）。
+HMENU Client::menuFromJsonPublic(const Json::Value &menuInfo) {
+  return menuFromJson(menuInfo);
+}
+
 // called when a language bar button needs a menu
 // virtual
 HMENU Client::onMenu(LangBarButton *btn) {
@@ -1700,42 +1742,69 @@ Json::Value Client::createRpcRequest(const char *methodName) {
   return request;
 }
 
-void CALLBACK Client::onAsyncPollTimer(HWND, UINT, UINT_PTR id, DWORD) {
-  auto *client = reinterpret_cast<Client *>(id);
-  if (client != nullptr) {
-    client->pollAsyncResponses();
+// 隐藏泵窗口的 wndProc：WM_TIMER 转发给绑定在 GWLP_USERDATA 上的 this。
+// 窗口是消息专用（HWND_MESSAGE 父级），不显示、不抢焦点，由宿主消息循环泵。
+LRESULT CALLBACK Client::asyncPumpWndProc(HWND hwnd, UINT msg, WPARAM wp,
+                                          LPARAM lp) {
+  if (msg == WM_TIMER) {
+    auto *self =
+        reinterpret_cast<Client *>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (self != nullptr && wp != 0) {
+      self->pollAsyncResponses();
+    }
+    return 0;
   }
+  if (msg == WM_NCDESTROY) {
+    ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+  }
+  return ::DefWindowProcW(hwnd, msg, wp, lp);
 }
 
 void Client::refreshAsyncPollTimer() {
-  // 定时器挂在候选窗上：WM_TIMER 由候选窗过程转发给轮询（见
-  // MoqiCandidateWindow::wndProc 的 WM_TIMER 分支）。SetTimer 传窗口句柄时
-  // lpTimerFunc 不会被调用，所以必须靠窗口过程。
-  HWND targetWindow = nullptr;
-  if (textService_ != nullptr && textService_->candidateWindow_ != nullptr &&
-      textService_->candidateWindow_->isWindow()) {
-    targetWindow = textService_->candidateWindow_->hwnd();
+  // 2026-11-20 定稿：**自建隐藏窗口 + SetTimer**。
+  //
+  // 三个前案都各有死穴：
+  //   1) 挂候选窗——候选窗只在组字期间存在，空闲时没有轮询，daemon 推来的
+  //      语言栏补丁只能等下一次按键才被读到；
+  //   2) SetTimer(NULL,...) 线程定时器——hwnd 为 NULL 时系统**忽略传入的
+  //      idEvent**，TIMERPROC 收到的是系统分配的 id 而不是 this 指针
+  //      （日志实锤：set thread timer id=19615，this 指针不可能是这个值），
+  //      回调要么从不触发要么解引用野指针；
+  //   3) 专用线程读管道——TSF 对象操作必须回 UI 线程，绕一圈还是要窗口。
+  //
+  // 泵窗口在首次需要时常驻创建（TSF 线程），进程退出随窗口类消亡。
+  if (asyncPollTimerWindow_ != nullptr && ::IsWindow(asyncPollTimerWindow_)) {
+    return;  // 已就位
   }
-
-  if (asyncPollTimerId_ != 0 &&
-      (targetWindow == nullptr || targetWindow != asyncPollTimerWindow_)) {
-    ::KillTimer(asyncPollTimerWindow_, asyncPollTimerId_);
-    asyncPollTimerId_ = 0;
-    asyncPollTimerWindow_ = nullptr;
+  static const wchar_t kPumpClass[] = L"MoqiAsyncPump";
+  static bool classRegistered = false;
+  if (!classRegistered) {
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = &Client::asyncPumpWndProc;
+    wc.hInstance = ::GetModuleHandleW(nullptr);
+    wc.lpszClassName = kPumpClass;
+    classRegistered = ::RegisterClassW(&wc) != 0;
   }
-
-  if (targetWindow != nullptr && asyncPollTimerId_ == 0) {
-    asyncPollTimerId_ =
-        ::SetTimer(targetWindow, reinterpret_cast<UINT_PTR>(this),
-                   ASYNC_RPC_POLL_INTERVAL_MS, nullptr);
-    asyncPollTimerWindow_ = asyncPollTimerId_ != 0 ? targetWindow : nullptr;
-    const DWORD err = asyncPollTimerId_ == 0 ? ::GetLastError() : 0;
-    // AI 结果轮询设置：常规路径走 trace（error 档不落）。
-    appendRpcTraceLog(L"[pollTimer] set hwnd=0x" +
-                      std::to_wstring(reinterpret_cast<UINT_PTR>(targetWindow)) +
-                      L" id=" + std::to_wstring(asyncPollTimerId_) +
-                      L" gle=" + std::to_wstring(err));
+  asyncPollTimerWindow_ = ::CreateWindowExW(
+      0, kPumpClass, L"", WS_POPUP, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+      ::GetModuleHandleW(nullptr), nullptr);
+  if (asyncPollTimerWindow_ == nullptr) {
+    appendRpcGuardLog(L"[pollTimer] pump window create failed gle=" +
+                      std::to_wstring(::GetLastError()));
+    return;
   }
+  ::SetWindowLongPtrW(asyncPollTimerWindow_, GWLP_USERDATA,
+                      reinterpret_cast<LONG_PTR>(this));
+  // 窗口型 SetTimer：idEvent 原样传给 WM_TIMER 的 wParam，回调可靠。
+  asyncPollTimerId_ =
+      ::SetTimer(asyncPollTimerWindow_, reinterpret_cast<UINT_PTR>(this),
+                 ASYNC_RPC_POLL_INTERVAL_MS, nullptr);
+  const DWORD err = asyncPollTimerId_ == 0 ? ::GetLastError() : 0;
+  appendRpcTraceLog(L"[pollTimer] pump hwnd=0x" +
+                    std::to_wstring(reinterpret_cast<uintptr_t>(
+                        asyncPollTimerWindow_)) +
+                    L" id=" + std::to_wstring(asyncPollTimerId_) +
+                    L" gle=" + std::to_wstring(err));
 }
 
 bool Client::waitForRpcIdle(int timeoutMs) const {
@@ -1779,6 +1848,14 @@ void Client::enqueueAsyncResponse(const Json::Value &msg) {
 }
 
 bool Client::applyAsyncResponse(Json::Value &msg, Ime::EditSession *session) {
+  // 语言栏按钮补丁帧（2026-11-20）。daemon 侧工具栏/菜单改了中英、全半角、
+  // 标点后推过来的**只带按钮**的帧：只刷图标，绝不走 updateStatus 的引擎
+  // 状态分支——那是按键快照语义，空字段会把用户正在组字的候选清掉。
+  if (msg.get("langStatusOnly", false).asBool()) {
+    updateLanguageButtons(msg);
+    appendRpcTraceLog(L"[langbar] push applied");
+    return true;
+  }
   // 云剪贴板推送帧带 cloudClip 标记：进入/退出转发模式（所有键走 RPC，
   // 本地引擎不处理——否则 rime 吃掉选字键刷掉列表）。
   if (msg.isMember("cloudClip")) {
@@ -1888,6 +1965,16 @@ void Client::pollAsyncResponses() {
                             msg.get("aiOverlay", false).asBool() ? 1 : 0));
       enqueueAsyncResponse(msg);
     }
+  }
+
+  // langStatusOnly（语言栏按钮补丁）不需要编辑会话：当队列头部就是这类帧时
+  // 直接应用。否则"当前上下文不可用"（刚切走/切回、无焦点窗口）会把它们
+  // 卡在队列里，表现又回到"点中字语言栏不变"。
+  while (!pendingAsyncResponses_.empty() &&
+         pendingAsyncResponses_.front().get("langStatusOnly", false).asBool()) {
+    Json::Value head = pendingAsyncResponses_.front();
+    pendingAsyncResponses_.pop_front();
+    applyAsyncResponse(head, nullptr);
   }
 
   flushPendingAsyncResponsesWithCurrentContext();
@@ -2149,8 +2236,11 @@ bool Client::callRpcMethod(Json::Value &request, Json::Value &response) {
 
 bool Client::isPipeCreatedByMoqiServer(HANDLE pipe) {
   // security check: make sure that we're connecting to the correct server
-  ULONG serverPid;
+  ULONG serverPid = 0;
   if (GetNamedPipeServerProcessId(pipe, &serverPid)) {
+    // 记下 daemon PID：转发弹窗类命令前要用它做前台授权
+    //（AllowSetForegroundWindow(daemonPid)，见 onCommand）。
+    serverPid_.store(serverPid);
     // FIXME: check the command line of the server?
     // See this:
     // http://www.codeproject.com/Articles/19685/Get-Process-Info-with-NtQueryInformationProcess
@@ -2478,6 +2568,9 @@ void Client::closeRpcConnection() {
   if (asyncPollTimerId_ != 0) {
     ::KillTimer(asyncPollTimerWindow_, asyncPollTimerId_);
     asyncPollTimerId_ = 0;
+  }
+  if (asyncPollTimerWindow_ != nullptr) {
+    ::DestroyWindow(asyncPollTimerWindow_);
     asyncPollTimerWindow_ = nullptr;
   }
   if (pipe_ != INVALID_HANDLE_VALUE) {

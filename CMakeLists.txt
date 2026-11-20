@@ -46,10 +46,37 @@ add_definitions(
     /GR-
 )
 
+# Windows 7 targeting (2026-11-19). ON by default: one package must run on both
+# Windows 7 SP1 and Windows 10/11, so the published binaries target the older
+# floor. With it ON the SDK headers only expose Win7-era APIs, which turns any
+# accidental Win8+ call into a compile error instead of a runtime "entry point
+# not found"; the linker also stamps subsystem 6.01.
+# Windows 7 SP1 is required (0x0601 == NT 6.1); Win7 RTM is not supported.
+# Set -DMOQI_TARGET_WIN7=OFF to build against the 0x0602 floor again (the
+# feature-specific Win8+ behaviour is runtime-gated anyway, see DaemonTray).
+option(MOQI_TARGET_WIN7 "Build for Windows 7 SP1 (NT 6.1): hide Win8+ APIs at compile time" ON)
+if(MOQI_TARGET_WIN7)
+    set(MOQI_WINVER 0x0601)
+    set(MOQI_NTDDI 0x06010000)
+else()
+    set(MOQI_WINVER 0x0602)
+    set(MOQI_NTDDI 0x06020000)
+endif()
 add_definitions(
     -DWIN32_LEAN_AND_MEAN
-    -D_WIN32_WINNT=0x0602
+    -D_WIN32_WINNT=${MOQI_WINVER}
+    -DNTDDI_VERSION=${MOQI_NTDDI}
 )
+if(MOQI_TARGET_WIN7)
+    # Subsystem version is what Windows' loader actually enforces. Without this
+    # the linker stamps 6.00/6.02 from the default toolchain and the exe/dll can
+    # still be refused on Win7 even though every imported API exists.
+    # Only the DLLs get it globally: applying WINDOWS to every EXE would break
+    # the console unit tests, which need CONSOLE. GUI executables (daemon,
+    # SetupHelper) set their own subsystem in their own CMakeLists.
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /SUBSYSTEM:WINDOWS,6.01")
+    message(STATUS "MOQI_TARGET_WIN7=ON: _WIN32_WINNT=0x0601, subsystem 6.01")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

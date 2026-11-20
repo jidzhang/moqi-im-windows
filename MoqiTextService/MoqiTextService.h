@@ -107,17 +107,18 @@ public:
 		return candPerRow_;
 	}
 
-	void setCandPerRow(int candPerRow) {
-		candPerRow_ = candPerRow;
-	}
+	// 列数/间距改变必须立即重排已存在的候选窗：这两项只在
+	// updateCandidates() 的 contentChanged 分支里被同步，而菜单改数时组字
+	// 内容往往没变（isCandidateContentApplied 判真），整块被跳过，结果
+	// "总候选 5、每行还是 3"（2026-11-19 Win7 x86 用户实报；Win10 上被
+	// daemon refreshPageSize 重建 schema 间接掩盖）。实现见 .cpp。
+	void setCandPerRow(int candPerRow);
 
 	int candSpacing() const {
 		return candSpacing_;
 	}
 
-	void setCandSpacing(int candSpacing) {
-		candSpacing_ = candSpacing;
-	}
+	void setCandSpacing(int candSpacing);
 
 	std::wstring selKeys() const {
 		return selKeys_;

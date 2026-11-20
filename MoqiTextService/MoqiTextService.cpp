@@ -1023,6 +1023,7 @@ void TextService::updateCandidates(Ime::EditSession* session) {
 			elementMgr->UpdateUIElement(candidateListElementId_);
 		}
 	}
+
 }
 
 void TextService::updateCandidatesWindow(Ime::EditSession* session) {
@@ -1608,6 +1609,18 @@ void TextService::checkCandidateWindowDpiChanged() {
 void TextService::onCandidateWindowDpiChanged() {
 	appliedCandidateDpi_ = 0;
 	checkCandidateWindowDpiChanged();
+}
+
+void TextService::setCandPerRow(int candPerRow) {
+	candPerRow_ = candPerRow;
+	// 见头文件注释：列数改变必须立刻重排已存在的候选窗，不能等下一次
+	// contentChanged（菜单改数时组字内容通常没变，那个分支会被跳过）。
+	refreshCandidateAppearance();
+}
+
+void TextService::setCandSpacing(int candSpacing) {
+	candSpacing_ = candSpacing;
+	refreshCandidateAppearance();
 }
 
 void TextService::refreshCandidateAppearance() {

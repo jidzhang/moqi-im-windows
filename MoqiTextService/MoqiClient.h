@@ -120,6 +120,9 @@ private:
 	bool readPendingPipeMessage(std::string& serializedReply);
 	void refreshAsyncPollTimer();
 	void pollAsyncResponses();
+	// 异步泵窗口（MoqiAsyncPump）的 wndProc：WM_TIMER -> pollAsyncResponses。
+	static LRESULT CALLBACK asyncPumpWndProc(HWND hwnd, UINT msg, WPARAM wp,
+	                                         LPARAM lp);
 
 public:
   // 候选窗消息泵里的轮询入口（WM_TIMER 转发；异步推送取回用）。
@@ -138,14 +141,20 @@ private:
 	void flushPendingAsyncResponsesWithCurrentContext();
 	void flushPendingAsyncResponses(Ime::EditSession* session = nullptr);
 	bool applyAsyncResponse(Json::Value& msg, Ime::EditSession* session = nullptr);
-	static void CALLBACK onAsyncPollTimer(HWND hwnd, UINT msg, UINT_PTR id, DWORD time);
     void closeRpcConnection();
 
 	bool init();
     void resetTextServiceState();
 
-    void addKeyEventToRpcRequest(Json::Value& request, Ime::KeyEvent& keyEvent);
+public:
+    // 菜单查询与转换（2026-11-19）：输入工具栏的"菜单"按钮必须走与语言栏
+    // 完全相同的菜单路径，不能有两套实现。
     bool sendOnMenu(std::string button_id, Json::Value& result);
+    // 把 daemon 回包里的 menuItems JSON 树转成 HMENU。
+    HMENU menuFromJsonPublic(const Json::Value& menuInfo);
+
+private:
+    void addKeyEventToRpcRequest(Json::Value& request, Ime::KeyEvent& keyEvent);
 
     // applyEngineState=false：辅助方法（init/onActivate/onCommand/onMenu/
     // compartment/keyboard）的响应只带控制回执，零值状态字段必须忽略。
@@ -167,6 +176,11 @@ private:
 	TextService* textService_;
 	std::string guid_;
 	HANDLE pipe_;
+	// daemon 进程 PID（连上管道时抓）。用于在转发"会弹窗/拉外部程序"的
+	// 命令前把前台权限转授给 daemon——daemon 自己是后台进程，永远拿不到
+	// 前台权限，只有宿主（本进程，通常正处前台）能替它授权
+	//（2026-11-19 用户实报 Win10 上记事本/部署提示被压到后面）。
+	std::atomic<unsigned long> serverPid_;
 	std::atomic<int> rpcInProgress_;
 	std::atomic<bool> activationInProgress_;
 	unsigned int nextSeqNum_;
