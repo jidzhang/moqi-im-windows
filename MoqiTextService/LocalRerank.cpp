@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdlib>
+#include <deque>
+#include <limits>
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
@@ -294,6 +296,10 @@ void RerankData::loadLocked(const string& sharedDataDir,
             br["pair_word_ratio"].asDouble() >= 0) {
           cfg.pairWordRatio = br["pair_word_ratio"].asDouble();
         }
+        if (br.isMember("colloc_pmi") && br["colloc_pmi"].isDouble() &&
+            br["colloc_pmi"].asDouble() >= 0) {
+          cfg.collocPmi = br["colloc_pmi"].asDouble();
+        }
       }
     }
   }
@@ -346,6 +352,7 @@ void RerankData::loadLocked(const string& sharedDataDir,
       f = sp + 1;
     }
     wordMass_[w1] += rowTotal;
+    totalTokens_ += rowTotal;
   }
 }
 
@@ -527,6 +534,131 @@ bool applyMixedPairRerank(const string& composition, vector<Cand>& candidates,
     }
     if (s > bestScore) {
       bestScore = s;
+      bestIdx = static_cast<int>(i);
+    }
+  }
+  if (bestIdx < 0) return false;
+  rotateToFirst(candidates, static_cast<size_t>(bestIdx));
+  if (cursor == bestIdx) cursor = 0;
+  return true;
+}
+
+// 整句候选的搭配证据 v3：按 bigram 词表穷举切分，统计相邻词对里
+// PMI = ln(count·N/(mass[a]·mass[b])) ≥ 阈值 的"凝固搭配"对数与其中
+// 最小 PMI。v1 只看有无、v2 看对数——都被泛用字链击穿（不知道→我 有据
+// 但 PMI 仅 0.90；务必→解决 频次 3 但 PMI 3.66）。阈值 2.0 数据实测
+// 一刀切开正解与病句。切不开 → (0, 0)。
+pair<int, double> collocScore(
+    const unordered_map<string, unordered_map<string, int>>& pairs,
+    const unordered_map<string, int>& wordMass, long long totalTokens,
+    double pmiMin, const string& text) {
+  vector<string> runes;
+  for (size_t i = 0; i < text.size();) {
+    unsigned char c = static_cast<unsigned char>(text[i]);
+    size_t len = 1;
+    if ((c & 0xF8) == 0xF0) len = 4;
+    else if ((c & 0xF0) == 0xE0) len = 3;
+    else if ((c & 0xE0) == 0xC0) len = 2;
+    runes.push_back(text.substr(i, len));
+    i += len;
+  }
+  const size_t n = runes.size();
+  if (n < 2 || totalTokens <= 0) return {0, 0.0};
+  const size_t kMaxWord = 8;
+  struct Node {
+    size_t pos;
+    string lastWord;
+    int cnt;
+    double minPmi;
+  };
+  deque<Node> queue{{0, string(), 0, 1e18}};
+  int bestCnt = 0;
+  double bestMin = 0.0;
+  const auto pmiOf = [&](const string& a, const string& b) {
+    const auto ra = pairs.find(a);
+    if (ra == pairs.end()) return -1e18;
+    const auto cit = ra->second.find(b);
+    // 频次地板 3：PMI 再高、只出现 1~2 次的偶发组合不进判决
+    //（两案的最小真实频次正是 3：务必→解决）。
+    if (cit == ra->second.end() || cit->second < 3) return -1e18;
+    const int ma = 1;
+    const double massA =
+        static_cast<double>(wordMass.count(a) ? wordMass.at(a) : ma);
+    const double massB =
+        static_cast<double>(wordMass.count(b) ? wordMass.at(b) : ma);
+    return log(static_cast<double>(cit->second) *
+               static_cast<double>(totalTokens) / (massA * massB));
+  };
+  while (!queue.empty()) {
+    Node nd = queue.front();
+    queue.pop_front();
+    if (nd.pos == n) {
+      if (!nd.lastWord.empty() &&
+          (nd.cnt > bestCnt ||
+           (nd.cnt == bestCnt && nd.minPmi > bestMin))) {
+        bestCnt = nd.cnt;
+        bestMin = nd.minPmi;
+      }
+      continue;
+    }
+    for (size_t l = 1; l <= kMaxWord && nd.pos + l <= n; ++l) {
+      string w;
+      w.reserve(l * 3);
+      for (size_t k = 0; k < l; ++k) w += runes[nd.pos + k];
+      if (pairs.find(w) == pairs.end()) continue;
+      int c2 = nd.cnt;
+      double m2 = nd.minPmi;
+      if (!nd.lastWord.empty()) {
+        const double p = pmiOf(nd.lastWord, w);
+        if (p >= pmiMin) {
+          ++c2;
+          if (p < m2) m2 = p;
+        }
+      }
+      queue.push_back({nd.pos + l, w, c2, m2});
+    }
+  }
+  if (bestCnt == 0) bestMin = 0.0;
+  return {bestCnt, bestMin};
+}
+
+// 整句搭配证据换位（Go applyCollocationRerank 的 C++ 镜像）。闸门全套：
+// 覆盖（不短于首名）/ 每对证据 ≥ collocFloor / 有据对数严格多于首名 /
+// 证据压过上方最强整词证据 / 只提到首位其余顺移。
+bool applyCollocationRerank(vector<Cand>& candidates, int& cursor) {
+  const RerankData& data = RerankData::instance();
+  const RerankConfig& cfg = data.config();
+  if (cfg.collocPmi < 0 || candidates.size() < 2) return false;
+  // 只对 ≥3 词（≥6 字）长候选生效（v1 实炸：短候选越权换位 d1 -4.95）。
+  if (utf8RuneCount(candidates[0].first) < 6) return false;
+  const auto& pairs = data.pairCounts();
+  const auto& wordMass = data.wordMass();
+  const long long total = data.totalBigramTokens();
+  if (pairs.empty() || total <= 0) return false;
+
+  const int firstCnt =
+      collocScore(pairs, wordMass, total, cfg.collocPmi,
+                  stripMarks(candidates[0].first)).first;
+  const size_t firstRunes = utf8RuneCount(candidates[0].first);
+  int wordMassAbove = 0;
+  int bestIdx = -1, bestCnt = 0;
+  double bestMin = 0.0;
+  for (size_t i = 1; i < candidates.size(); ++i) {
+    // 严格等长（v2 实炸：对数优势偏向更长续词句"最重要的一点在于"）。
+    if (utf8RuneCount(candidates[i].first) != firstRunes) continue;
+    const auto wm = wordMass.find(stripMarks(candidates[i - 1].first));
+    if (wm != wordMass.end() && wm->second > wordMassAbove) {
+      wordMassAbove = wm->second;
+    }
+    const auto sc = collocScore(pairs, wordMass, total, cfg.collocPmi,
+                                stripMarks(candidates[i].first));
+    const int cnt = sc.first;
+    const double minPmi = sc.second;
+    if (cnt <= firstCnt) continue;  // 强搭配对数必须严格占优
+    if (bestCnt == 0 || cnt > bestCnt ||
+        (cnt == bestCnt && minPmi > bestMin)) {
+      bestCnt = cnt;
+      bestMin = minPmi;
       bestIdx = static_cast<int>(i);
     }
   }

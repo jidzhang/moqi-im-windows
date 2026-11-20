@@ -38,6 +38,15 @@ struct RerankConfig {
   int pairFloor = 300;
   int pairMaxLen = 4;
   double pairWordRatio = 1.0;
+  // 整句搭配证据通道 v3（2026-11-20）：判别量=PMI 强搭配对数——
+  // ln(count·N/(mass[a]·mass[b])) ≥ collocPmi 计一对"凝固搭配"。v1 有据
+  // 对数/v2 等长闸两轮实炸（病句靠泛用字链，如 不知道→我 PMI 0.90）；
+  // 数据实测：正解搭配 PMI 3.66~5.75，病句 ≤1.59，阈值 2.0 一刀切开。
+  // 默认 2.0 开启（2026-11-20 用户拍板"真歧义可以接受，比无比解决好太多"）：
+  // v3 回放 710/750（-1 词），修好 4 病案（时间推移/我想说的是/魔幻现实
+  // 主义/为什么这么样）+ 案件一务必；新错 5 个全部是双重凝固搭配真歧义
+  //（最重要的角色 vs 就是），泛用字链（不知道我是谁）已被 PMI 全部分离。
+  double collocPmi = 2.0;
   std::unordered_map<std::string, std::vector<std::string>> continuations;
 };
 
@@ -65,6 +74,8 @@ public:
   const std::unordered_map<std::string, int>& wordMass() const {
     return wordMass_;
   }
+  // zh-bigram 全表 token 总量（PMI 归一化用）。
+  long long totalBigramTokens() const { return totalTokens_; }
 
   // 测试接缝（local_rerank_test）：直接注入配置与表，绕过文件加载；
   // tsvLoaded_=true 防止后续 ensureLoaded 重读 tsv 覆盖注入内容。
@@ -93,6 +104,7 @@ private:
   std::unordered_map<std::string, std::unordered_map<std::string, int>>
       pairCounts_;
   std::unordered_map<std::string, int> wordMass_;
+  long long totalTokens_ = 0;
 };
 
 // 短窗连贯：最近 8 秒上屏句子的尾词接续提升（applyContextualLift 的状态侧）。
@@ -118,6 +130,9 @@ bool applyBigramRerank(const std::string& commitText,
                        std::vector<Cand>& candidates, int& cursor);
 bool applyMixedPairRerank(const std::string& composition,
                           std::vector<Cand>& candidates, int& cursor);
+// 整句搭配证据换位（全拼/混拼都适用）：mixedPair 未动时，用 bigram 后继
+// 表的"有据对数优势"翻罚分杀不动的固定搭配病句。
+bool applyCollocationRerank(std::vector<Cand>& candidates, int& cursor);
 
 // Display-position -> engine-position map (nil-equivalent: empty when order
 // is unchanged or texts do not biject).
