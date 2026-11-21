@@ -608,12 +608,20 @@ void Client::updateCommitString(Json::Value &msg, Ime::EditSession *session,
         if (suppressTerminationNotification) {
           textService_->suppressNextCompositionTerminatedNotification();
         }
-        textService_->endComposition(session->context(), /*clearText=*/true);
+        // 组字区直接定稿（2026-11-21 kimi 修复）：自研编辑器在
+        // compositionend 固化组字内容，"清空+另插"被它当外部修改丢弃
+        //（拼音滞留输入框、空格不上屏的根因）。XAML 便签的整段重选由
+        // 后置 SetSelection 压制（endCompositionWithText 内）。
+        textService_->endCompositionWithText(
+            session->context(), commitString.c_str(),
+            static_cast<int>(commitString.length()),
+            autoPairedSymbols ? 1 : 0);
+      } else {
+        textService_->insertTextAtSelection(
+            session->context(), commitString.c_str(),
+            static_cast<int>(commitString.length()),
+            autoPairedSymbols ? 1 : 0);
       }
-      textService_->insertTextAtSelection(
-          session->context(), commitString.c_str(),
-          static_cast<int>(commitString.length()),
-          autoPairedSymbols ? 1 : 0);
       // 数字直通标记：单字符 0-9 的代插置位，供紧跟的 "." 改走应用原生
       // 插入（见 onKeyDown/filterKeyDown 的 passthrough）。
       lastCommitWasDigit_ = commitString.size() == 1 &&
