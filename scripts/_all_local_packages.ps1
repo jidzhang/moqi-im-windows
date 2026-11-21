@@ -1,22 +1,25 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Build all FIVE installer tiers locally (2026-11-04, universal x86 engine):
-  lite / standard / essay / wiki / wanxiang.
+  Build all THREE installer tiers locally (2026-11-21, universal x86 engine):
+  lite / standard / wanxiang.
+
+  2026-11-21 tier cut (user decision, product-stack d5 evidence): essay tier
+  removed (full essay gram 67.43% loses to the 8.6MB distilled standard gram
+  67.74% on d5-1888); wiki tier removed (its dist gram behaved bit-identical
+  to the standard gram, and the 2026-10-28 wiki gram also lost on re-test).
 
   The standard tier is produced by _all_in_package.ps1, which also builds the
-  shared stage tree and version.txt. The other four tiers reuse that stage
+  shared stage tree and version.txt. The other two tiers reuse that stage
   with -OutputName / -ExcludeBuild / -GramPath, exactly like CI does.
 
-  All five tiers share one stage tree built by _all_in_package.ps1; the only
+  All three tiers share one stage tree built by _all_in_package.ps1; the only
   differences are the bundled gram (and lite dropping the prebuilt dict
-  cache). release.yml builds the same five tiers from the gram-assets release.
+  cache). release.yml builds the same three tiers from the gram-assets release.
 
   Output files (installer\dist\):
     moqi-im-windows-setup-<ver>.exe           (standard)
     moqi-im-windows-setup-lite-<ver>.exe      (lite: 1.1MB lite gram, no prebuilt dict cache)
-    moqi-im-windows-setup-essay-<ver>.exe     (essay gram bundled)
-    moqi-im-windows-setup-wiki-<ver>.exe      (self-trained wiki gram bundled)
     moqi-im-windows-setup-wanxiang-<ver>.exe  (wanxiang gram bundled, local only)
 
 .EXAMPLE
@@ -30,16 +33,14 @@ param(
     [string] $ProtobufRoot = "",
     [string] $ProtobufSourceDir = "",
     [string] $Version = "",
-    [string] $EssayGram = "",
     [string] $WanxiangGram = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 if (-not $RepoRoot) { $RepoRoot = Join-Path $PSScriptRoot ".." }
-# Default $Version from version.txt: the wiki-tier existence check builds the
-# file name from $Version, so an empty value looks for "wiki-.exe" and reports
-# "wiki tier failed" even though the installer was produced.
+# Default $Version from version.txt: the wanxiang-tier file name is built from
+# $Version, so an empty value looks for "wanxiang-.exe" downstream.
 # Encoding note (2026-11-06): this file now carries Chinese comments and MUST
 # stay UTF-8 with BOM -- PowerShell 5.1 reads a BOM-less file as ANSI and the
 # comments turn to mojibake.
@@ -48,18 +49,12 @@ if (-not $Version) {
 }
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
 
-if (-not $EssayGram) {
-    $EssayGram = Join-Path $RepoRoot "installer\dist\zh-hans-t-essay-bgw.gram"
-}
 if (-not $WanxiangGram) {
     $WanxiangGram = Join-Path $RepoRoot "installer\dist\wanxiang-lts-zh-hans.gram"
 }
-if (-not $WikiGram) {
-    $WikiGram = Join-Path $RepoRoot "installer\dist\zh-moqi-wiki.gram"
-}
-foreach ($gram in @($EssayGram, $WanxiangGram, $WikiGram)) {
+foreach ($gram in @($WanxiangGram)) {
     if (-not (Test-Path -LiteralPath $gram)) {
-        throw "Grammar model not found: $gram (put it in installer\dist or pass -EssayGram/-WanxiangGram)"
+        throw "Grammar model not found: $gram (put it in installer\dist or pass -WanxiangGram)"
     }
 }
 
@@ -67,7 +62,7 @@ $allIn = Join-Path $PSScriptRoot "_all_in_package.ps1"
 $buildInstaller = Join-Path $RepoRoot "installer\build-installer.ps1"
 $stageDir = Join-Path $RepoRoot "installer\stage"
 
-Write-Host "== Tier 1/5: standard (shared stage + version.txt + 9MB gram) =="
+Write-Host "== Tier 1/3: standard (shared stage + version.txt + 9MB gram) =="
 # 标准档的 gram 由 _all_in_package.ps1 统一带进安装包（2026-11-06：
 # 直接跑 _all_in_package.ps1 曾产出漏 gram 的 62.7MB 包），这里显式传入
 # 并做存在性检查，不再二次跑 ISCC。
@@ -85,7 +80,7 @@ if ($ProtobufSourceDir) { $allArgs.ProtobufSourceDir = $ProtobufSourceDir }
 if ($Version) { $allArgs.Version = $Version }
 & $allIn @allArgs
 
-Write-Host "== Tier 2/5: lite (compiled-out AI/cloud + 1.1MB gram) =="
+Write-Host "== Tier 2/3: lite (compiled-out AI/cloud + 1.1MB gram) =="
 $LiteGram = Join-Path $RepoRoot "installer\dist\zh-moqi-lite.gram"
 if (-not (Test-Path -LiteralPath $LiteGram)) { throw "lite gram not found: $LiteGram" }
 # Lite = 全量 stage 换 lite daemon（MOQI_LITE 编译期剔除 AI/云剪贴板/WebDAV/
@@ -120,21 +115,10 @@ foreach ($liteRemove in @("ai_config.json", "templates", "cloudclipboard")) {
     -ExcludeBuild 'moqi-ime\input_methods\rime\data\build\*' `
     -GramPath $LiteGram
 
-Write-Host "== Tier 3/5: essay =="
-& $buildInstaller -StageDir $stageDir `
-    -OutputName "moqi-im-windows-setup-essay" `
-    -GramPath $EssayGram
-
-Write-Host "== Tier 4/5: wanxiang (local-only tier) =="
+Write-Host "== Tier 3/3: wanxiang (local-only tier) =="
 & $buildInstaller -StageDir $stageDir `
     -OutputName "moqi-im-windows-setup-wanxiang" `
     -GramPath $WanxiangGram
-Write-Host "== Tier 5/5: wiki (self-trained gram) =="
-& $buildInstaller -StageDir $stageDir `
-    -Version $Version `
-    -OutputName "moqi-im-windows-setup-wiki" `
-    -GramPath $WikiGram
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $RepoRoot ("installer\dist\moqi-im-windows-setup-wiki-" + $Version + ".exe")))) { throw "wiki tier failed" }
 
 
 Write-Host ""

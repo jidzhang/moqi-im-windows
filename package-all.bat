@@ -1,13 +1,13 @@
 @echo off
-REM Double-click wrapper: build all 5 installer tiers locally.
+REM Double-click wrapper: build all 3 installer tiers locally
 REM Version always comes from version.txt (no interactive prompt).
 REM Log written to installer\dist\package-all.log. Pure ASCII by project rule.
 setlocal
 cd /d "%~dp0"
 
 set /p VER=<version.txt
-echo Building all 5 tiers for version %VER% (from version.txt) ...
-echo (daemon + TSF DLL x64/x86 + dict prebuild + Inno x5, about 6 min)
+echo Building all 3 tiers for version %VER% (from version.txt) ...
+echo (daemon + TSF DLL x64/x86 + dict prebuild + Inno x3, about 5 min)
 echo Log: installer\dist\package-all.log
 echo.
 

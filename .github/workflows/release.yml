@@ -170,10 +170,10 @@ jobs:
       - name: Cache frozen gram assets
         uses: actions/cache@v4
         with:
-          # essay(206MB)/wanxiang(398MB) 两个大模型确定不再修改，缓存省下载。
-          # 一旦替换这两个文件，手动把 key 的 v1 递增。
+          # wanxiang(398MB) 大模型确定不再修改，缓存省下载。
+          # 一旦替换这个文件，手动把 key 的 v1 递增。
+          # 2026-11-21 砍档：essay(206MB)/wiki(30.5MB) 档已裁，不再拉取。
           path: |
-            moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
             moqi-im-windows/installer/dist/wanxiang-lts-zh-hans.gram
           key: gram-frozen-v1
 
@@ -184,7 +184,9 @@ jobs:
         run: |
           # 内置语法模型不在仓库里（均 gitignore）：统一从本仓内部 release
           # gram-assets 取（draft，用户侧不可见）。按 API 报告的 size 校验
-          # 落盘长度，不硬编码字节数——std/lite/wiki 三个后续可能更新。
+          # 落盘长度，不硬编码字节数——std/lite 两个后续可能更新。
+          # 2026-11-21 砍档：essay/wiki gram 不再拉取（资产仍留在
+          # gram-assets 以便回滚，见 EVAL 决策记录）。
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
           $gramDir = Join-Path $env:GITHUB_WORKSPACE 'moqi-im-windows/installer/dist'
@@ -198,8 +200,6 @@ jobs:
           $wanted = @(
             'zh-moqi.gram',
             'zh-moqi-lite.gram',
-            'zh-moqi-wiki.gram',
-            'zh-hans-t-essay-bgw.gram',
             'wanxiang-lts-zh-hans.gram'
           )
           foreach ($name in $wanted) {
@@ -222,17 +222,17 @@ jobs:
       - name: Build all installer tiers
         working-directory: ${{ github.workspace }}/moqi-im-windows
         run: |
-          # 五档共用 _all_in_package.ps1 生成的同一个 stage，只靠
+          # 三档共用 _all_in_package.ps1 生成的同一个 stage，只靠
           # -OutputName / -ExcludeBuild / -GramPath 区分。与本地
           # _all_local_packages.ps1 必须同构：改一处要同步另一处。
+          # 2026-11-21 砍档：五档 → 三档（lite/standard/wanxiang），
+          # essay/wiki 两档裁撤依据见评测决策记录（产品栈 d5 实测）。
           $version = "${{ steps.version.outputs.version }}"
           $dist = 'installer/dist'
           $bi = './installer/build-installer.ps1'
           $grams = @{
             std      = Join-Path $dist 'zh-moqi.gram'
             lite     = Join-Path $dist 'zh-moqi-lite.gram'
-            wiki     = Join-Path $dist 'zh-moqi-wiki.gram'
-            essay    = Join-Path $dist 'zh-hans-t-essay-bgw.gram'
             wanxiang = Join-Path $dist 'wanxiang-lts-zh-hans.gram'
           }
 
@@ -279,18 +279,6 @@ jobs:
             -GramPath $grams.lite -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'lite tier failed' }
 
-          # wiki 档：书面语/百科风格的长句增强
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
-            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-wiki `
-            -GramPath $grams.wiki -Version $version
-          if ($LASTEXITCODE -ne 0) { throw 'wiki tier failed' }
-
-          # essay 档：八股文长句增强（原 full 档，v1.7.0 改名）
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
-            -StageDir ./installer/stage -OutputName moqi-im-windows-setup-essay `
-            -GramPath $grams.essay -Version $version
-          if ($LASTEXITCODE -ne 0) { throw 'essay tier failed' }
-
           # wanxiang 档：万象语法模型
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bi `
             -StageDir ./installer/stage -OutputName moqi-im-windows-setup-wanxiang `
@@ -317,9 +305,7 @@ jobs:
         run: |
           $assets = @(
             "installer\dist\moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\moqi-im-windows-setup-wiki-${{ steps.version.outputs.version }}.exe",
             "installer\dist\moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\moqi-im-windows-setup-essay-${{ steps.version.outputs.version }}.exe",
             "installer\dist\moqi-im-windows-setup-wanxiang-${{ steps.version.outputs.version }}.exe"
           )
           foreach ($asset in $assets) {
@@ -340,9 +326,7 @@ jobs:
           name: moqi-im-windows-${{ steps.version.outputs.tag }}
           path: |
             moqi-im-windows/installer/dist/moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe
-            moqi-im-windows/installer/dist/moqi-im-windows-setup-wiki-${{ steps.version.outputs.version }}.exe
             moqi-im-windows/installer/dist/moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe
-            moqi-im-windows/installer/dist/moqi-im-windows-setup-essay-${{ steps.version.outputs.version }}.exe
             moqi-im-windows/installer/dist/moqi-im-windows-setup-wanxiang-${{ steps.version.outputs.version }}.exe
             moqi-im-windows/installer/dist/SHA256SUMS.txt
           if-no-files-found: error
@@ -360,9 +344,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $assets = @(
             "installer\dist\moqi-im-windows-setup-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\moqi-im-windows-setup-wiki-${{ steps.version.outputs.version }}.exe",
             "installer\dist\moqi-im-windows-setup-lite-${{ steps.version.outputs.version }}.exe",
-            "installer\dist\moqi-im-windows-setup-essay-${{ steps.version.outputs.version }}.exe",
             "installer\dist\moqi-im-windows-setup-wanxiang-${{ steps.version.outputs.version }}.exe",
             "installer\dist\SHA256SUMS.txt"
           )

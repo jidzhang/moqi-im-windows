@@ -1,31 +1,34 @@
 # 墨奇输入法 Windows 安装包说明
 
-## 一、五个下载怎么选（2026-10-27 实测重写）
+## 一、三个下载怎么选（2026-11-21 重写；同日裁撤 essay / wiki 两档）
 
-实测口径：产品原生栈（rime.dll + C++ daemon，无 GUI）· 整句 120 句 + 混拼 500 对 ·
-每臂全新用户目录 · 复跑一致。方法与冻结工件见 benchmark 仓
-`docs/protocol_native_stack.md`、结论见 `docs/install_recommendation.md`。
+实测口径：产品原生栈（管道直驱 MoqiDaemon，C++ 引擎链）· 整句 1888 句（≤10 字）·
+每格全新用户目录 · 独立重跑逐位一致。同一引擎同一词典，只换内置语法模型：
 
-| 文件 | 内容 | 整句 | 混拼 | 适合谁 |
-|---|---|---|---|---|
-| `moqi-im-windows-setup.exe` | 预编译词库，无语法模型 | 54.17% | **41.40%** | **推荐给绝大多数用户**：混拼最优、体积适中、装完即用 |
-| `moqi-im-windows-setup-lite.exe` | 不含预编译词库与模型 | 54.17% | 41.40% | 只想要最小包；与标准版解码同分，仅首跑现场编译词库（约 20 秒） |
-| `moqi-im-windows-setup-essay.exe` | + `zh-hans-t-essay-bgw`（206MB） | **58.33%（+4.16）** | 38.20%（−3.20） | 长句优先，能接受混拼小幅下降 |
-| `moqi-im-windows-setup-wanxiang.exe` | + `wanxiang-lts-zh-hans`（398MB） | **63.33%（+9.16）** | 31.80%（−9.60） | 只写长文/连续整句的重度用户；**混拼明显变差，日常短句不建议** |
-| `moqi-im-windows-setup-wiki.exe` | + `zh-moqi-wiki`（64.5MB，自训/纯维基 CC BY-SA） | 54.17%（±0） | 41.40%（±0） | **不建议**：与无模型档双维度同分（正考虑下架） |
+| 文件 | 内容 | 整句 d5 | 适合谁 |
+|---|---|---|---|
+| `moqi-im-windows-setup.exe`（约 71MB） | 预编译词库 + 8.6MB 蒸馏语法模型 | 67.74% | **推荐给绝大多数用户**：装完即用、体积适中 |
+| `moqi-im-windows-setup-lite.exe`（约 30MB） | 1.1MB 裁剪模型，无预编译词库 | 精度让步 | 极限小包 / 老机器；首跑现场编译词库（实测约 10 秒） |
+| `moqi-im-windows-setup-wanxiang.exe`（约 373MB） | + `wanxiang-lts-zh-hans`（398MB） | **71.35%（+3.61）** | 整句效果优先的重度用户 |
 
-一句话：**日常用标准版**；写长文用 wanxiang；中间选择 essay；极限小包用 lite；
-wiki 档暂无收益。
+一句话：**日常用标准版**；老机器用 lite；整句效果优先用 wanxiang。
+
+裁撤记录（2026-11-21，用户拍板）：
+
+- **essay 档**（全量八股文 206MB）：同罚分下 67.43%，输给 8.6MB 蒸馏标准档
+  （67.74%）——v1.7.0「蒸馏反超全量」在新引擎链上再次复现；
+- **wiki 档**（自训 30.5MB）：现行资产打分与标准档逐位一致（等于白带 16MB），
+  10-28 老版自训 gram 复测同样不敌标准档。
 
 所有安装包都是**通用包**：引擎固定 32 位（`MoqiDaemon.exe` + `rime.dll`），同时安装 32/64 位两个薄 TSF DLL。32 位 Windows 和 64 位 Windows 用同一个安装包；64 位系统上的 32 位应用走 `SysWOW64` 客户端，64 位应用走 `System32` 客户端，都连同一个 daemon。
 
-## 二、单独安装语法模型（第 4 个文件）
+## 二、单独安装语法模型（不换包也能升级效果）
 
-1. 下载 `zh-hans-t-essay-bgw.gram`。
+1. 拿到一个 `.gram`（例如万象 `wanxiang-lts-zh-hans.gram`）。
 2. **推荐：复制到用户目录（不需要管理员权限，升级/重装也不会丢）**：
 
    ```text
-   C:\Users\<你的用户名>\AppData\Roaming\Moqi\Rime\zh-hans-t-essay-bgw.gram
+   C:\Users\<你的用户名>\AppData\Roaming\Moqi\Rime\wanxiang-lts-zh-hans.gram
    ```
 
    资源管理器地址栏粘贴 `%APPDATA%\Moqi\Rime` 回车即可打开。
@@ -36,19 +39,13 @@ wiki 档暂无收益。
    C:\Program Files (x86)\MoqiIM\moqi-ime\input_methods\rime\data\
    ```
 
-3. 让墨奇重新加载：托盘图标右键 → **“刷新配置(&R)”**，或结束 `MoqiDaemon.exe` 后重新启动。
-4. 默认配置 `grammar_model` 为 `auto`，会自动选择上述两个目录里 **≥50MB 的最大 `.gram`**（2026-10-27 由 64MB 下调，自训模型 64.5MB 由此可被自动识别），不需要改配置。
+3. 让墨奇重新加载：托盘图标右键 → **"刷新配置(&R)"**，或结束 `MoqiDaemon.exe` 后重新启动。
+4. 默认配置 `grammar_model` 为 `auto`，会自动选择上述目录里**最大的 `.gram`**
+   （2026-11-07 起取消大小门槛，放任意 `.gram` 都能被识别），不需要改配置。
 
-复制后目录里应该有（二选一即可，推荐用户目录）：
-
-```text
-%APPDATA%\Moqi\Rime\zh-hans-t-essay-bgw.gram            ← 推荐（普通权限，升级不丢）
-C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选（管理员）
-```
-
-> **gram 现状（2026-11-04）**：标准包自带 8.6MB `zh-moqi.gram`（实测整句 +3.5 分），
-> lite 自带 1.1MB 裁剪版；两档都不是“零 gram”。essay / wanxiang / wiki 各带一个
-> 大模型。也可以把 `.gram` 放用户目录单独启用。
+> **gram 现状（2026-11-21）**：标准包自带 8.6MB `zh-moqi.gram`（蒸馏版），
+> lite 自带 1.1MB 裁剪版；wanxiang 档自带 398MB 全量模型。用户目录里放更大的
+> `.gram` 会覆盖标准档的模型（auto 取最大者）。
 
 > 覆盖安装会先清空 `{app}\moqi-ime` 再释放新文件，放在安装目录里的 `.gram` 会被删掉；
 > 放在 `%APPDATA%\Moqi\Rime\` 里的不受影响。
@@ -65,13 +62,14 @@ C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选
 
 可选值：
 
-- `"auto"`（默认）：自动选上面两个目录里最大的、≥50MB 的 `.gram`。
-- `"zh-hans-t-essay-bgw"`：显式指定。**值 = 文件名去掉 `.gram`**。
+- `"auto"`（默认）：自动选上面目录里最大的 `.gram`。
+- `"wanxiang-lts-zh-hans"`：显式指定。**值 = 文件名去掉 `.gram`**。
 - `"off"`：不启用任何外部 gram。
 
-如果你把文件改名成 `my-model.gram`，要么把配置改成 `"my-model"`，要么保持 `"auto"`（自动选最大的）。保存后托盘 →“刷新配置(&R)”生效。
+如果你把文件改名成 `my-model.gram`，要么把配置改成 `"my-model"`，要么保持 `"auto"`（自动选最大的）。保存后托盘 →"刷新配置(&R)"生效。
 
-> 不建议用万象 LMDG 替换 essay-bgw：2026-10-17 同口径实测，万象 d3 混合 42.65（essay 54.35）、d4 延续 49.40（essay 51.95），核心场景明显倒退，只有 d5 整句 +1.5。
+还可以用 `"grammar_penalty"` 手工微调组句罚分（范围 -20~0；不填按模型预设：
+标准/精简 -4，万象 0）。
 
 ## 四、为什么没有单独的 x86 / x64 包
 
@@ -83,11 +81,10 @@ C:\Program Files (x86)\MoqiIM\...\rime\data\zh-hans-t-essay-bgw.gram  ← 备选
 
 所以不需要按系统架构拆包；拆开只会让用户装错。体积大头仍是词库与可选 gram。
 
-## 五、本次更新（2026-10-21）要点
+## 五、裁撤档位的历史依据（2026-11-21）
 
-- **数字/小数点直通**：中文模式下打 `4.` 直接出 `4.`（不再丢数字、光标卡在 `.` 上）；
-  `4.5` → `4.5`，`12.` → `12.`；单独打 `.` 仍是中文句号 `。`；
-  拼音输入过程中按数字仍然用于选择第 N 个候选。
-- **候选窗**：首格高亮四边贴边（上下左右都贴到边），直角；默认 7 个候选、每行 9 个。
-- **语法模型**：标准包自带 8.6MB 小模型，lite 带 1.1MB 裁剪版；
-  essay / wanxiang / wiki 三档各带一个模型；也可单独下载 `.gram` 放入用户目录启用。
+- essay / wiki 两档与标准档的差异只在内置 gram；产品栈同引擎同词典实测，
+  两者均不优于标准档 8.6MB 蒸馏模型（essay −0.31、wiki 逐位同分），
+  万象模型 +3.61（其中模型 +2.81、罚分 0 贡献 +0.80）。
+- 老的"单独装 essay 模型"文档路径仍然有效（把 gram 放用户目录即可），
+  只是不再提供对应安装包。

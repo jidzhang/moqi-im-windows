@@ -80,9 +80,9 @@ jobs:
       - name: Cache frozen gram assets
         uses: actions/cache@v4
         with:
-          # 与 release.yml 共用同一份缓存（essay/wanxiang 大模型不再修改）
+          # 与 release.yml 共用同一份缓存（wanxiang 大模型不再修改；
+          # 2026-11-21 砍档后 essay gram 不再拉取，缓存 key 未变以复用）
           path: |
-            moqi-im-windows/installer/dist/zh-hans-t-essay-bgw.gram
             moqi-im-windows/installer/dist/wanxiang-lts-zh-hans.gram
           key: gram-frozen-v1
 
