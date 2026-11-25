@@ -141,6 +141,11 @@ private:
 	void flushPendingAsyncResponsesWithCurrentContext();
 	void flushPendingAsyncResponses(Ime::EditSession* session = nullptr);
 	bool applyAsyncResponse(Json::Value& msg, Ime::EditSession* session = nullptr);
+	// 鼠标点选/高亮/翻页不在按键的编辑会话里：上屏与候选刷新都要会话，
+	// 回复须自带会话再应用（无会话时 updateStatus 只刷语言栏按钮）。
+	// 2026-11-25 修复：5-19 eb20ebf 删掉 applyAsyncResponse 的会话兜底后
+	// 鼠标点选、滚轮翻页在应用侧不再生效（引擎已选词、界面无反应）。
+	bool applyResponseWithCurrentContext(Json::Value& msg);
     void closeRpcConnection();
 
 	bool init();

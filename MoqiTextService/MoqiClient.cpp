@@ -1396,7 +1396,7 @@ bool Client::highlightCandidate(int index) {
     Json::Value ret;
     if (localEngine_.highlightCandidate(index, ret)) {
       ret["success"] = true;
-      return applyAsyncResponse(ret);
+      return applyResponseWithCurrentContext(ret);
     }
     return false;
   }
@@ -1407,7 +1407,7 @@ bool Client::highlightCandidate(int index) {
   if (!callRpcMethod(req, ret)) {
     return false;
   }
-  return applyAsyncResponse(ret);
+  return applyResponseWithCurrentContext(ret);
 }
 
 bool Client::selectCandidate(int index) {
@@ -1415,7 +1415,7 @@ bool Client::selectCandidate(int index) {
     Json::Value ret;
     if (localEngine_.selectCandidate(index, ret)) {
       ret["success"] = true;
-      return applyAsyncResponse(ret);
+      return applyResponseWithCurrentContext(ret);
     }
     return false;
   }
@@ -1426,7 +1426,7 @@ bool Client::selectCandidate(int index) {
   if (!callRpcMethod(req, ret)) {
     return false;
   }
-  return applyAsyncResponse(ret);
+  return applyResponseWithCurrentContext(ret);
 }
 
 bool Client::changePage(bool backward) {
@@ -1434,7 +1434,7 @@ bool Client::changePage(bool backward) {
     Json::Value ret;
     if (localEngine_.changePage(backward, ret)) {
       ret["success"] = true;
-      return applyAsyncResponse(ret);
+      return applyResponseWithCurrentContext(ret);
     }
     return false;
   }
@@ -1445,7 +1445,7 @@ bool Client::changePage(bool backward) {
   if (!callRpcMethod(req, ret)) {
     return false;
   }
-  return applyAsyncResponse(ret);
+  return applyResponseWithCurrentContext(ret);
 }
 
 bool Client::onPreservedKey(const GUID &guid) {
@@ -1905,6 +1905,32 @@ bool Client::applyAsyncResponse(Json::Value &msg, Ime::EditSession *session) {
     return handleRpcResponse(resp, session, true);
   }
   return handleRpcResponse(msg, session, true);
+}
+
+bool Client::applyResponseWithCurrentContext(Json::Value &msg) {
+  const bool success = msg.get("success", false).asBool();
+  auto context = textService_->currentContext();
+  if (!context) {
+    appendRpcGuardLog(
+        L"mouse response not applied: current context is unavailable");
+    return applyAsyncResponse(msg);
+  }
+
+  // ASYNCDONTCARE：文档未加锁时同步授予，被占住时延后授予（回调可能晚于
+  // 本函数返回，msg 必须按值捕获）。
+  HRESULT sessionResult = E_FAIL;
+  auto editSession = Ime::ComPtr<Ime::EditSession>::make(
+      context, [this, msg](Ime::EditSession *session, TfEditCookie) mutable {
+        applyAsyncResponse(msg, session);
+      });
+  context->RequestEditSession(textService_->clientId(), editSession,
+                              TF_ES_ASYNCDONTCARE | TF_ES_READWRITE,
+                              &sessionResult);
+  if (FAILED(sessionResult)) {
+    appendRpcGuardLog(L"mouse response RequestEditSession failed hr=" +
+                      std::to_wstring(static_cast<long>(sessionResult)));
+  }
+  return success;
 }
 
 void Client::flushPendingAsyncResponses(Ime::EditSession *session) {
