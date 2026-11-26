@@ -625,12 +625,20 @@ pair<int, double> collocScore(
 // 整句搭配证据换位（Go applyCollocationRerank 的 C++ 镜像）。闸门全套：
 // 覆盖（不短于首名）/ 每对证据 ≥ collocFloor / 有据对数严格多于首名 /
 // 证据压过上方最强整词证据 / 只提到首位其余顺移。
-bool applyCollocationRerank(vector<Cand>& candidates, int& cursor) {
+bool applyCollocationRerank(const string& composition,
+                            vector<Cand>& candidates, int& cursor) {
   const RerankData& data = RerankData::instance();
   const RerankConfig& cfg = data.config();
   if (cfg.collocPmi < 0 || candidates.size() < 2) return false;
-  // 只对 ≥3 词（≥6 字）长候选生效（v1 实炸：短候选越权换位 d1 -4.95）。
-  if (utf8RuneCount(candidates[0].first) < 6) return false;
+  // 残尾/纠错组字串禁换位（2026-11-26 实炸：nizaiganshenm 的纠错候选
+  // 你在干啥呢 被换到显示 #1，空格按 displayPerm 提交它时引擎选不出，
+  // commit 空、组字残留并串脏下一句）。只在组字串完全可拼分时换位，
+  // 与 mixedPair 的同函数闸互补（mixed 治混拼、colloc 只治完整全拼）。
+  if (!fullyPinyinSegmentable(composition)) return false;
+  // 只对 ≥2 词（≥5 字）长候选生效（v1 实炸：短候选越权换位 d1 -4.95；
+  // 2026-11-26 6→5：主谓+宾 5 字句（我没有意见）被 gram 前缀命中误压，
+  // 仍受 PMI≥2+等长+对数严格占优全闸约束）。
+  if (utf8RuneCount(candidates[0].first) < 5) return false;
   const auto& pairs = data.pairCounts();
   const auto& wordMass = data.wordMass();
   const long long total = data.totalBigramTokens();

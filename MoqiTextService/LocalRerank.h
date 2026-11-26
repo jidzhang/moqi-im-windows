@@ -79,14 +79,18 @@ public:
 
   // 测试接缝（local_rerank_test）：直接注入配置与表，绕过文件加载；
   // tsvLoaded_=true 防止后续 ensureLoaded 重读 tsv 覆盖注入内容。
+  // totalTokens 缺省 0（旧用例只测 mixedPair 不看 PMI 归一化）；
+  // colloc 用例必须显式给正数，否则 collocScore 因 total<=0 整体返回 0。
   void injectForTest(
       const RerankConfig& cfg,
       std::unordered_map<std::string, std::unordered_map<std::string, int>> pairs,
-      std::unordered_map<std::string, int> wordMass) {
+      std::unordered_map<std::string, int> wordMass,
+      long long totalTokens = 0) {
     std::lock_guard<std::mutex> lock(mutex_);
     cfg_ = cfg;
     pairCounts_ = std::move(pairs);
     wordMass_ = std::move(wordMass);
+    totalTokens_ = totalTokens;
     tsvLoaded_ = true;
   }
 
@@ -130,9 +134,10 @@ bool applyBigramRerank(const std::string& commitText,
                        std::vector<Cand>& candidates, int& cursor);
 bool applyMixedPairRerank(const std::string& composition,
                           std::vector<Cand>& candidates, int& cursor);
-// 整句搭配证据换位（全拼/混拼都适用）：mixedPair 未动时，用 bigram 后继
-// 表的"有据对数优势"翻罚分杀不动的固定搭配病句。
-bool applyCollocationRerank(std::vector<Cand>& candidates, int& cursor);
+// 整句搭配证据换位（只在组字串完全可拼分时生效）：mixedPair 未动时，用
+// bigram 后继表的"有据对数优势"翻罚分杀不动的固定搭配病句。
+bool applyCollocationRerank(const std::string& composition,
+                            std::vector<Cand>& candidates, int& cursor);
 
 // Display-position -> engine-position map (nil-equivalent: empty when order
 // is unchanged or texts do not biject).
