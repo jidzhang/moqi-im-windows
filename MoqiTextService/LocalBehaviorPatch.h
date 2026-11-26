@@ -106,6 +106,11 @@ inline std::string buildLocalBehaviorPatchBody(const Json::Value& cfg,
   // d1/d4/d5 逐位零扰动、真机黑盒 100 例逐例一致；代价 d2 −0.25、
   // d3 native −0.15（ime 0）。证据=62 §二十二-二十三。
   emit("translator/typo_second_pass_compete_floor: 2");
+  // 前缀惯性（2026-11-25，引擎组句层）：续打时与上一整音节帧显示文字一致
+  // 的路径按字加分，引擎要改写已显示的字，分数优势必须盖过它。每字 0.75 分：
+  // 产品栈扫参 0.5~1.5 分终句持平、2 分起拦掉纠正掉分（−16 句/867 句）；
+  // 1 分在短句整句卷上实付 −4 句，0.75 分 +2 句。取值依据见 80 号交接。
+  emit("translator/stable_prefix_bias: [0.75]");
   if (lines == 0) return "";
   return body;
 }
