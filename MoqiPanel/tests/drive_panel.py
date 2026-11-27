@@ -307,8 +307,8 @@ def main():
 
     try:
         print("== 1. engine ready ==")
-        text = wait_status("就绪", "失败", timeout=60)
-        expect("就绪" in text, "engine became ready (status: %s)" % text)
+        text = wait_status("ready", "failed", timeout=60)
+        expect("ready" in text, "engine became ready (status: %s)" % text)
 
         print("== 2. type by full pinyin ==")
         for word in ["jintian", "tianqi", "hen", "hao"]:
@@ -332,8 +332,8 @@ def main():
         else:
             print("== 3. translate and copy ==")
             user32.SendMessageW(ctypes.c_void_p(translate_button), BM_CLICK, 0, 0)
-            text = wait_status("已翻译", "翻译失败", "翻译成功但复制失败", timeout=90)
-            expect("已翻译并把译文复制" in text, "translate succeeded (status: %s)" % text)
+            text = wait_status("Translated and copied", "Translation failed", "the copy failed", timeout=90)
+            expect("Translated and copied" in text, "translate succeeded (status: %s)" % text)
             translation = window_text(result_trans)
             clip = clipboard_text() or ""
             print("  translation: %s" % translation)

@@ -7,7 +7,7 @@
 namespace MoqiPanel {
 
 constexpr wchar_t kClassName[] = L"MoqiPanelWindow";
-constexpr wchar_t kWindowTitle[] = L"墨奇输入板";
+constexpr wchar_t kWindowTitle[] = L"Moqi Panel";
 
 // 候选高亮色与墨奇候选窗同色（MoqiTextService 的 candHighlightColor_）。
 constexpr COLORREF kWindowBg = RGB(245, 246, 248);

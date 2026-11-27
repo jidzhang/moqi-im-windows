@@ -222,14 +222,14 @@ def main():
         time.sleep(0.05)
         dp.user32.PostMessageW(ctypes.c_void_p(edit), dp.WM_LBUTTONUP, 0,
                                at(width - 5, height - 8))
-        wait_status("已复制选中内容")
+        wait_status("Copied selection")
 
     def sentinel():
         dp.set_clipboard_text("sentinel")
 
     try:
-        current = wait_status("就绪", timeout=60)
-        expect("就绪" in current, "engine became ready (status: %s)" % current)
+        current = wait_status("ready", timeout=60)
+        expect("ready" in current, "engine became ready (status: %s)" % current)
 
         # Probe: the panel must see Shift as held for a posted Shift+1.
         set_text(edit, "")
@@ -291,11 +291,11 @@ def main():
         print("   copied : %s" % want)
         expect(want != PASTED and not any(src in want for src, _ in RULES),
                "every rule changes something (%d rules)" % len(RULES))
-        expect(click_copy_source() == want, "【复制原文】 converts")
+        expect(click_copy_source() == want, "Copy Text converts")
         if usable:
             sentinel()
             press(edit, 0x41, 0x1E, ctrl=True)  # Ctrl+A: panel hotkey, select all + copy
-            wait_status("已复制选中内容")
+            wait_status("Copied selection")
             expect(dp.clipboard_text() == want, "Ctrl+A converts")
         sentinel()
         drag_select_all()
@@ -361,7 +361,7 @@ def main():
                 time.sleep(0.2)
             found = {cid: h for h, cls, cid in dp.child_controls(window)}
             deadline = time.time() + 120
-            while "就绪" not in dp.window_text(found[dp.ID_STATUS]) and time.time() < deadline:
+            while "ready" not in dp.window_text(found[dp.ID_STATUS]) and time.time() < deadline:
                 time.sleep(0.2)
             dp.press(found[dp.ID_EDIT], ",")
             time.sleep(0.6)

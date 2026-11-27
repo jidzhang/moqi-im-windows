@@ -76,7 +76,7 @@ bool loadTranslateConfig(const std::filesystem::path& file, TranslateConfig* out
 
   std::string bytes;
   if (!readFileBytes(file, &bytes)) {
-    *error = L"读不了 translate.json（文件被占用或没有权限）。";
+    *error = L"Cannot read translate.json (file locked or access denied).";
     return false;
   }
   // 记事本"UTF-8 带 BOM"存出来的文件：跳过 BOM，否则首键名变成 "\ufeffbase_url"。
@@ -89,22 +89,22 @@ bool loadTranslateConfig(const std::filesystem::path& file, TranslateConfig* out
     std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
     if (!reader->parse(bytes.data(), bytes.data() + bytes.size(), &root,
                        &parseError)) {
-      *error = L"translate.json 不是合法的 JSON：" + utf8ToWide(parseError);
+      *error = L"translate.json is not valid JSON: " + utf8ToWide(parseError);
       return false;
     }
   }
   if (!root.isObject()) {
-    *error = L"translate.json 的最外层必须是一个对象 { … }。";
+    *error = L"translate.json top level must be an object { … }.";
     return false;
   }
   const Json::Value& extra = root["extra_body"];
   if (!extra.isNull() && !extra.isObject()) {
-    *error = L"translate.json 里的 extra_body 必须是对象 { … }（不需要就删掉该键）。";
+    *error = L"translate.json extra_body must be an object { … } (delete the key if unused).";
     return false;
   }
   const Json::Value& maxTokens = root["max_tokens"];
   if (!maxTokens.isNull() && !maxTokens.isInt()) {
-    *error = L"translate.json 里的 max_tokens 必须是整数。";
+    *error = L"translate.json max_tokens must be an integer.";
     return false;
   }
 
@@ -265,7 +265,7 @@ bool parseChatText(const std::string& responseBody, std::string* text,
     if (!reader->parse(responseBody.data(),
                        responseBody.data() + responseBody.size(), &root,
                        &parseError)) {
-      *error = "接口应答不是合法的 JSON" +
+      *error = "The API response is not valid JSON" +
                (responseBody.empty() ? std::string() : "：" + responseBody.substr(0, 120));
       return false;
     }
@@ -295,7 +295,7 @@ bool parseChatText(const std::string& responseBody, std::string* text,
   }
   content = trimNarrow(content);
   if (content.empty()) {
-    *error = "接口应答里没有译文" +
+    *error = "No translation found in the API response" +
              (responseBody.empty() ? std::string() : "：" + responseBody.substr(0, 120));
     return false;
   }
@@ -314,7 +314,7 @@ bool parseChatText(const std::string& responseBody, std::string* text,
     content = trimNarrow(content.substr(openLen, content.size() - openLen - closeLen));
   }
   if (content.empty()) {
-    *error = "接口返回的译文为空。";
+    *error = "The API returned an empty translation.";
     return false;
   }
   *text = content;

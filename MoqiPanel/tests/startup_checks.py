@@ -95,9 +95,9 @@ def main():
     failures = 0
 
     cases = [
-        (os.path.join(root, "墨奇输入板 空格也能有"), "纯英文路径",
+        (os.path.join(root, "墨奇输入板 空格也能有"), "must contain only ASCII letters",
          "non-ASCII folder path is refused"),
-        (os.path.join(root, "incomplete"), "文件夹不完整",
+        (os.path.join(root, "incomplete"), "folder is incomplete",
          "incomplete folder is refused (only the exe is present)"),
     ]
     for folder, fragment, title in cases:

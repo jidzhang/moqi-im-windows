@@ -36,7 +36,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCmd) {
   PanelWindow* panel = PanelWindow::create(instance, executableDir(), &why);
   if (panel == nullptr) {
     if (!why.empty()) {
-      ::MessageBoxW(nullptr, why.c_str(), L"墨奇输入板 - 无法启动", MB_OK | MB_ICONERROR);
+      ::MessageBoxW(nullptr, why.c_str(), L"Moqi Panel - Cannot Start", MB_OK | MB_ICONERROR);
     }
     return 2;
   }

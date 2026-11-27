@@ -93,8 +93,8 @@ PanelWindow* PanelWindow::create(HINSTANCE instance, const std::wstring& exeDir,
   // 就打不开——表现是引擎起不来。这里直接拦住并说清楚。
   for (wchar_t c : exeDir) {
     if (c > 0x7F) {
-      *why = L"程序所在的文件夹路径只能包含英文、数字和普通符号。\n\n当前路径：\n" +
-             exeDir + L"\n\n请把整个文件夹移到（或改名成）纯英文路径后再运行。";
+      *why = L"The panel folder path must contain only ASCII letters, digits and common symbols.\n\nCurrent path:\n" +
+             exeDir + L"\n\nMove (or rename) the whole folder to a pure-ASCII path and run again.";
       return nullptr;
     }
   }
@@ -105,7 +105,7 @@ PanelWindow* PanelWindow::create(HINSTANCE instance, const std::wstring& exeDir,
   for (const wchar_t* relative : required) {
     const std::wstring path = exeDir + relative;
     if (::GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
-      *why = L"文件夹不完整，缺少：\n" + path + L"\n\n请把压缩包完整解压后再运行。";
+      *why = L"The folder is incomplete, missing:\n" + path + L"\n\nExtract the whole archive before running.";
       return nullptr;
     }
   }
@@ -124,8 +124,8 @@ PanelWindow* PanelWindow::create(HINSTANCE instance, const std::wstring& exeDir,
     std::filesystem::remove(probe, removeEc);
   }
   if (!writable) {
-    *why = L"程序目录不可写，无法保存用户词典和学习数据：\n" + userDir.wstring() +
-           L"\n\n请把整个文件夹放到可写的位置（例如 D:\\MoqiPanel 或 U 盘）再运行。";
+    *why = L"The program folder is not writable; the user dictionary and learning data cannot be saved:\n" + userDir.wstring() +
+           L"\n\nPut the folder in a writable location (e.g. D:\\MoqiPanel or a USB drive) and run again.";
     return nullptr;
   }
 
@@ -149,7 +149,7 @@ PanelWindow* PanelWindow::create(HINSTANCE instance, const std::wstring& exeDir,
       WS_OVERLAPPEDWINDOW, panel->geometryX_, panel->geometryY_,
       outer.cx, outer.cy, nullptr, nullptr, instance, panel);
   if (hwnd == nullptr) {
-    *why = L"创建窗口失败。";
+    *why = L"Failed to create the window.";
     delete panel;
     return nullptr;
   }
@@ -167,7 +167,7 @@ int PanelWindow::onCreate() {
   createControls();
   layout();
   updateControls();
-  setStatus(L"正在启动输入引擎…（第一次启动要部署词库，需要十几秒）",
+  setStatus(L"Starting the input engine… (first run deploys the dictionaries, may take ~10s)",
             StatusKind::Neutral);
   // EngineClient 的生命周期 = 进程；停线程见 onDestroy，对象不 delete。
   engine_ = new EngineClient();
@@ -224,7 +224,7 @@ HWND PanelWindow::createControl(const wchar_t* className, const wchar_t* text,
 }
 
 void PanelWindow::createControls() {
-  modeButton_ = createControl(L"BUTTON", L"中", WS_TABSTOP, 0, kIdMode);
+  modeButton_ = createControl(L"BUTTON", L"CH", WS_TABSTOP, 0, kIdMode);
   edit_ = createControl(L"EDIT", L"",
                         WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
                             ES_NOHIDESEL,
@@ -234,19 +234,19 @@ void PanelWindow::createControls() {
   ::ImmAssociateContext(edit_, nullptr);
   ::SendMessageW(edit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                  MAKELPARAM(scaled(4), scaled(4)));
-  translateButton_ = createControl(L"BUTTON", L"翻译并复制 (Ctrl+Enter)", WS_TABSTOP, 0,
+  translateButton_ = createControl(L"BUTTON", L"Translate && Copy (Ctrl+Enter)", WS_TABSTOP, 0,
                                    kIdTranslate);
-  copySourceButton_ = createControl(L"BUTTON", L"复制原文", WS_TABSTOP, 0, kIdCopySource);
-  restoreButton_ = createControl(L"BUTTON", L"恢复", WS_TABSTOP, 0, kIdRestore);
-  recopyButton_ = createControl(L"BUTTON", L"重新复制", WS_TABSTOP, 0, kIdRecopy);
-  topmostCheck_ = createControl(L"BUTTON", L"置顶", WS_TABSTOP | BS_AUTOCHECKBOX, 0,
+  copySourceButton_ = createControl(L"BUTTON", L"Copy Text", WS_TABSTOP, 0, kIdCopySource);
+  restoreButton_ = createControl(L"BUTTON", L"Restore", WS_TABSTOP, 0, kIdRestore);
+  recopyButton_ = createControl(L"BUTTON", L"Copy Again", WS_TABSTOP, 0, kIdRecopy);
+  topmostCheck_ = createControl(L"BUTTON", L"Always on Top", WS_TABSTOP | BS_AUTOCHECKBOX, 0,
                                 kIdTopmost);
-  settingsButton_ = createControl(L"BUTTON", L"翻译设置…", WS_TABSTOP, 0, kIdSettings);
+  settingsButton_ = createControl(L"BUTTON", L"Translation Settings…", WS_TABSTOP, 0, kIdSettings);
   const DWORD resultStyle =
       WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL;
-  sourceLabel_ = createControl(L"STATIC", L"原文", SS_NOPREFIX, 0, kIdSourceLabel);
+  sourceLabel_ = createControl(L"STATIC", L"Source", SS_NOPREFIX, 0, kIdSourceLabel);
   resultSource_ = createControl(L"EDIT", L"", resultStyle, WS_EX_CLIENTEDGE, kIdResultSource);
-  transLabel_ = createControl(L"STATIC", L"译文", SS_NOPREFIX, 0, kIdTransLabel);
+  transLabel_ = createControl(L"STATIC", L"Translation", SS_NOPREFIX, 0, kIdTransLabel);
   resultTrans_ = createControl(L"EDIT", L"", resultStyle, WS_EX_CLIENTEDGE, kIdResultTrans);
   statusText_ = createControl(L"STATIC", L"", SS_NOPREFIX, 0, kIdStatus);
   counterText_ = createControl(L"STATIC", L"0/256", SS_NOPREFIX | SS_RIGHT, 0, kIdCounter);
@@ -488,7 +488,7 @@ void PanelWindow::setStatus(const std::wstring& text, StatusKind kind) {
 void PanelWindow::updateControls() {
   const bool busy = translating_ || translatePending_;
   ::EnableWindow(translateButton_, !busy);
-  ::SetWindowTextW(translateButton_, translating_ ? L"正在翻译…" : L"翻译并复制 (Ctrl+Enter)");
+  ::SetWindowTextW(translateButton_, translating_ ? L"Translating…" : L"Translate && Copy (Ctrl+Enter)");
   ::EnableWindow(restoreButton_, !lastSource_.empty());
   ::EnableWindow(recopyButton_, !lastTranslation_.empty());
   ::EnableWindow(modeButton_, engineStatus_ != EngineStatus::Failed);

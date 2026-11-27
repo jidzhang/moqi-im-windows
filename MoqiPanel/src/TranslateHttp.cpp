@@ -150,15 +150,15 @@ std::string friendlyTransportError(const std::string& error) {
   const int code = std::atoi(error.c_str() + prefix.size());
   switch (code) {
     case ERROR_WINHTTP_TIMEOUT:
-      return "连接翻译接口超时。";
+      return "Connection to the translation API timed out.";
     case ERROR_WINHTTP_CANNOT_CONNECT:
-      return "连不上翻译接口服务器——检查网络，或 translate.json 里的代理设置。";
+      return "Cannot reach the translation API server - check the network or the proxy setting in translate.json.";
     case ERROR_WINHTTP_NAME_NOT_RESOLVED:
-      return "翻译接口的域名解析失败——检查网络，或 translate.json 里的代理设置。";
+      return "DNS lookup for the translation API failed - check the network or the proxy setting in translate.json.";
     case ERROR_WINHTTP_SECURE_FAILURE:
-      return "TLS 握手失败（代理或证书问题）。";
+      return "TLS handshake failed (proxy or certificate problem).";
     default:
-      return "请求翻译接口失败（WinHTTP 错误 " + std::to_string(code) + "）。";
+      return "Request to the translation API failed (WinHTTP error " + std::to_string(code) + ").";
   }
 }
 
@@ -167,13 +167,13 @@ std::string friendlyHttpError(int status, const std::string& body) {
   switch (status) {
     case 401:
     case 403:
-      return "密钥无效或没有权限（" + detail + "）";
+      return "Invalid key or no permission (" + detail + ")";
     case 404:
-      return "接口地址不对，找不到 /chat/completions（" + detail + "）";
+      return "Wrong endpoint: /chat/completions not found (" + detail + ")";
     case 429:
-      return "请求过于频繁或额度已用尽（" + detail + "）";
+      return "Rate limited or quota exhausted (" + detail + ")";
     default:
-      return "翻译接口报错：" + detail;
+      return "The translation API returned an error: " + detail;
   }
 }
 

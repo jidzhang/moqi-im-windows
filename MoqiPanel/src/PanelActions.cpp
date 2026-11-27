@@ -221,12 +221,12 @@ bool PanelWindow::copySelection(HWND edit) {
   const std::wstring selection = text.substr(start, end - start);
   if (trimmed(selection).empty()) return false;
   if (copyText(hwnd_, convertPunctuation(selection))) {
-    setStatus(L"已复制选中内容（" + std::to_wstring(codePointCount(selection)) +
-                  L" 字，中文标点已换成英文标点）。",
+    setStatus(L"Copied selection (" + std::to_wstring(codePointCount(selection)) +
+                  L" chars, Chinese punctuation converted).",
               StatusKind::Success);
     return true;
   }
-  setStatus(L"复制失败：剪贴板正被别的程序占用，请重试。", StatusKind::Error);
+  setStatus(L"Copy failed: the clipboard is busy, please retry.", StatusKind::Error);
   return false;
 }
 
@@ -235,26 +235,26 @@ void PanelWindow::autoCopySelections() { copySelection(edit_); }
 void PanelWindow::doCopySource() {
   const std::wstring text = trimmed(controlText(edit_));
   if (text.empty()) {
-    setStatus(L"输入区是空的，没有可复制的文字。", StatusKind::Warn);
+    setStatus(L"The input area is empty; nothing to copy.", StatusKind::Warn);
     return;
   }
   if (copyText(hwnd_, convertPunctuation(text))) {
-    setStatus(L"已复制原文（" + std::to_wstring(codePointCount(text)) +
-                  L" 字，中文标点已换成英文标点）。",
+    setStatus(L"Copied input text (" + std::to_wstring(codePointCount(text)) +
+                  L" chars, Chinese punctuation converted).",
               StatusKind::Success);
   } else {
-    setStatus(L"复制失败：剪贴板正被别的程序占用，请重试。", StatusKind::Error);
+    setStatus(L"Copy failed: the clipboard is busy, please retry.", StatusKind::Error);
   }
 }
 
 void PanelWindow::doRecopy() {
   if (lastTranslation_.empty()) return;
   if (copyText(hwnd_, convertPunctuation(lastTranslation_))) {
-    setStatus(L"已重新复制译文（" + std::to_wstring(codePointCount(lastTranslation_)) +
-                  L" 字，中文标点已换成英文标点）。",
+    setStatus(L"Copied the translation again (" + std::to_wstring(codePointCount(lastTranslation_)) +
+                  L" chars, Chinese punctuation converted).",
               StatusKind::Success);
   } else {
-    setStatus(L"复制失败：剪贴板正被别的程序占用，请重试。", StatusKind::Error);
+    setStatus(L"Copy failed: the clipboard is busy, please retry.", StatusKind::Error);
   }
 }
 
@@ -268,7 +268,7 @@ void PanelWindow::doRestore() {
   ::SendMessageW(edit_, EM_SETSEL, end, end);
   ::SendMessageW(edit_, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(lastSource_.c_str()));
   ::SendMessageW(edit_, EM_SCROLLCARET, 0, 0);
-  setStatus(L"已把上一次清掉的原文放回输入区。", StatusKind::Neutral);
+  setStatus(L"Put the cleared text back into the input area.", StatusKind::Neutral);
   lastSource_.clear();
   updateControls();
 }
@@ -286,17 +286,17 @@ void PanelWindow::handleStatus(EngineStatus status) {
     }
     drainHeld();
     clearComposition();
-    setStatus(L"输入引擎启动失败，按键将按英文原样输入。请查看程序目录 "
-              L"user\\MoqiIM\\Log 下的日志。",
+    setStatus(L"Input engine failed to start; keys pass through as plain English. "
+              L"See the log under user\\MoqiIM\\Log in the program folder.",
               StatusKind::Error);
   } else if (status == EngineStatus::Connecting) {
     // 新连接 = 新的引擎会话：旧会话的组字/候选已经不存在了。
     clearComposition();
     if (wasReady) {
-      setStatus(L"与输入引擎的连接断开，正在重新连接…", StatusKind::Warn);
+      setStatus(L"Engine connection lost, reconnecting…", StatusKind::Warn);
     }
   } else {
-    setStatus(L"输入引擎就绪，可以打字了。", StatusKind::Success);
+    setStatus(L"Input engine ready. Start typing.", StatusKind::Success);
   }
   updateControls();
 }
@@ -311,7 +311,7 @@ void PanelWindow::handleResult(EngineResult* raw) {
       startTranslateRequest();
     } else if (translatePending_) {
       translatePending_ = false;
-      setStatus(L"输入引擎连接中断，翻译已取消，输入区没有改动。", StatusKind::Error);
+      setStatus(L"Engine connection dropped; translation cancelled, input unchanged.", StatusKind::Error);
       updateControls();
     }
   }
@@ -364,7 +364,7 @@ void PanelWindow::applyFrame(const Json::Value& frame) {
 
 void PanelWindow::setAsciiMode(bool ascii) {
   asciiMode_ = ascii;
-  ::SetWindowTextW(modeButton_, ascii ? L"英" : L"中");
+  ::SetWindowTextW(modeButton_, ascii ? L"EN" : L"CH");
 }
 
 void PanelWindow::clearComposition() {
@@ -388,35 +388,35 @@ void PanelWindow::insertCommit(const std::wstring& text) {
 
 void PanelWindow::doTranslate() {
   if (translating_ || translatePending_) {
-    setStatus(L"正在翻译，请稍候。", StatusKind::Neutral);
+    setStatus(L"Translating, please wait.", StatusKind::Neutral);
     return;
   }
   const std::wstring text = trimmed(controlText(edit_));
   if (text.empty()) {
-    setStatus(L"输入区是空的，没有可翻译的文字。", StatusKind::Warn);
+    setStatus(L"The input area is empty; nothing to translate.", StatusKind::Warn);
     return;
   }
   const size_t count = codePointCount(text);
   if (count > kMaxTranslateCodePoints) {
-    setStatus(L"超过 " + std::to_wstring(kMaxTranslateCodePoints) + L" 字（当前 " +
-                  std::to_wstring(count) + L" 字），请分段翻译。",
+    setStatus(L"Over the " + std::to_wstring(kMaxTranslateCodePoints) + L"-char limit (current " +
+                  std::to_wstring(count) + L"); split the text.",
               StatusKind::Warn);
     return;
   }
   TranslateConfig config;
   std::wstring loadError;
   if (!loadTranslateConfig(translateConfigPath_, &config, &loadError)) {
-    setStatus(L"translate.json 有问题：" + loadError, StatusKind::Error);
+    setStatus(L"translate.json problem: " + loadError, StatusKind::Error);
     return;
   }
   if (!config.configured()) {
-    setStatus(L"还没有配置翻译接口：点【翻译设置】填写接口地址和模型。", StatusKind::Warn);
+    setStatus(L"No translation API configured yet: open Translation Settings and fill in the URL and model.", StatusKind::Warn);
     return;
   }
   if (!preedit_.empty()) {
     // 还有没上屏的拼音：先用空格顶屏（取当前高亮候选），别把它丢了。
     translatePending_ = true;
-    setStatus(L"正在把组字上屏…", StatusKind::Neutral);
+    setStatus(L"Committing the composition…", StatusKind::Neutral);
     engine_->postFlush();
     updateControls();
     return;
@@ -437,12 +437,12 @@ void PanelWindow::startTranslateRequest() {
   if (!loadTranslateConfig(translateConfigPath_, &config, &loadError) ||
       !config.configured()) {
     translating_ = false;
-    setStatus(L"翻译接口配置读不出来，翻译已取消。", StatusKind::Error);
+    setStatus(L"Cannot read the translation settings; translation cancelled.", StatusKind::Error);
     updateControls();
     return;
   }
   translating_ = true;
-  setStatus(L"正在翻译…", StatusKind::Neutral);
+  setStatus(L"Translating…", StatusKind::Neutral);
   updateControls();
   const std::string utf8 = wideToUtf8(pendingSource_);
   const HWND target = hwnd_;
@@ -466,7 +466,7 @@ void PanelWindow::clearTranslatedSpan() {
     ::SendMessageW(edit_, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L""));
     return;
   }
-  setStatus(L"译文已复制，但输入区的原文在翻译期间被改过，没有清空。", StatusKind::Warn);
+  setStatus(L"Translation copied, but the input changed while translating; it was not cleared.", StatusKind::Warn);
 }
 
 void PanelWindow::handleTranslateDone(TranslateOutcome* raw) {
@@ -475,7 +475,7 @@ void PanelWindow::handleTranslateDone(TranslateOutcome* raw) {
   translating_ = false;
   if (!outcome->ok) {
     // 原子性：失败时输入区、结果区、剪贴板一律不动。
-    setStatus(L"翻译失败，输入区没有改动：" + utf8ToWide(outcome->error), StatusKind::Error);
+    setStatus(L"Translation failed, input unchanged: " + utf8ToWide(outcome->error), StatusKind::Error);
     updateControls();
     return;
   }
@@ -487,13 +487,13 @@ void PanelWindow::handleTranslateDone(TranslateOutcome* raw) {
   if (!copied) {
     // 复制失败就不清屏：原文原样留在输入区，点【重新复制】即可。
     lastSource_.clear();
-    setStatus(L"翻译成功但复制失败（剪贴板被别的程序占用）。点【重新复制】再试；"
-              L"输入区没有清空。",
+    setStatus(L"Translated but the copy failed (clipboard busy). Use Copy Again to retry; "
+              L"the input was not cleared.",
               StatusKind::Error);
   } else {
     clearTranslatedSpan();
     lastSource_ = pendingSource_;
-    setStatus(L"已翻译并把译文复制到剪贴板（中文标点已换成英文标点）。", StatusKind::Success);
+    setStatus(L"Translated and copied to the clipboard (Chinese punctuation converted).", StatusKind::Success);
   }
   updateControls();
 }
@@ -514,9 +514,9 @@ void PanelWindow::openSettings() {
   TranslateConfig saved;
   if (showSettingsDialog(hwnd_, uiFont_, loadError, config, &saved)) {
     if (saveTranslateConfig(translateConfigPath_, saved)) {
-      setStatus(L"翻译设置已保存，下一次翻译即生效。", StatusKind::Success);
+      setStatus(L"Translation settings saved; effective on the next translation.", StatusKind::Success);
     } else {
-      setStatus(L"翻译设置保存失败：程序目录不可写。", StatusKind::Error);
+      setStatus(L"Failed to save the translation settings: the program folder is not writable.", StatusKind::Error);
     }
   }
 }
