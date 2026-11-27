@@ -84,6 +84,8 @@ private:
   void applyFonts();
   void layout();
   int minimumHeight() const;
+  // 客户区 → 外框（含标题栏/边框/Win10 隐形边框）。
+  SIZE clientToOuter(SIZE client) const;
   void paint(HDC dc, const RECT& paintRect);
   void paintStrip(HDC dc);
   void onMouseDown(LPARAM lp);

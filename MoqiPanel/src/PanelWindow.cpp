@@ -141,10 +141,13 @@ PanelWindow* PanelWindow::create(HINSTANCE instance, const std::wstring& exeDir,
   ensureTranslateConfigTemplate(panel->translateConfigPath_);
 
   // 启动检查全过才弹窗口；窗口本身失败才需要回收（此后对象随进程存活）。
+  // geometryW_/H_ 是客户区尺寸；CreateWindowExW 要的是外框尺寸——不换算
+  // 的话标题栏+边框吃掉几十像素，底部状态栏正好被裁掉。
+  const SIZE outer = panel->clientToOuter({panel->geometryW_, panel->geometryH_});
   HWND hwnd = ::CreateWindowExW(
       panel->topmost_ ? WS_EX_TOPMOST : 0, kClassName, kWindowTitle,
       WS_OVERLAPPEDWINDOW, panel->geometryX_, panel->geometryY_,
-      panel->geometryW_, panel->geometryH_, nullptr, nullptr, instance, panel);
+      outer.cx, outer.cy, nullptr, nullptr, instance, panel);
   if (hwnd == nullptr) {
     *why = L"创建窗口失败。";
     delete panel;
@@ -262,6 +265,21 @@ int PanelWindow::minimumHeight() const {
   // 输入区最小 64px（约三行）——面板是短句输入板，不是长文编辑器
   //（2026-11-27 用户："不是让人在这里长篇大论的"）。
   return scaled(64 + 8 + 64 + 8 + 30 + 10 + 2 * (20 + 54 + 6) + 6 + 20 + 8);
+}
+
+// 客户区尺寸 → 窗口外框尺寸（含标题栏 + 边框）。此前把客户区需求直接当
+// 外框尺寸传给 CreateWindowExW/WM_GETMINMAXINFO，扣掉非客户区后客户区
+// 不够高，状态栏被裁出窗口外（2026-11-27 用户实报，需手动拉伸才看全）。
+// Win10 的隐形缩放边框不计入 AdjustWindowRectEx，直接用系统指标拼。
+SIZE PanelWindow::clientToOuter(SIZE client) const {
+  const int frameX =
+      ::GetSystemMetrics(SM_CXSIZEFRAME) + ::GetSystemMetrics(SM_CXPADDEDBORDER);
+  const int frameY =
+      ::GetSystemMetrics(SM_CYSIZEFRAME) + ::GetSystemMetrics(SM_CXPADDEDBORDER);
+  SIZE outer;
+  outer.cx = client.cx + 2 * frameX;
+  outer.cy = client.cy + 2 * frameY + ::GetSystemMetrics(SM_CYCAPTION);
+  return outer;
 }
 
 void PanelWindow::layout() {
@@ -488,7 +506,7 @@ void PanelWindow::loadGeometry() {
   geometryX_ = CW_USEDEFAULT;
   geometryY_ = CW_USEDEFAULT;
   geometryW_ = MulDiv(640, static_cast<int>(dpi_), 96);
-  geometryH_ = MulDiv(420, static_cast<int>(dpi_), 96);
+  geometryH_ = MulDiv(430, static_cast<int>(dpi_), 96);
   topmost_ = false;
   std::string bytes;
   if (!readFileBytes(geometryPath_, &bytes)) return;
@@ -516,7 +534,8 @@ void PanelWindow::loadGeometry() {
       geometryX_ = saved.left;
       geometryY_ = saved.top;
       geometryW_ = (std::max)(window["w"].asInt(), scaled(620));
-      geometryH_ = (std::max)(window["h"].asInt(), minimumHeight());
+      const int minOuterH = clientToOuter({0, minimumHeight()}).cy;
+      geometryH_ = (std::max)(window["h"].asInt(), minOuterH);
     }
   }
   topmost_ = root["topmost"].isBool() && root["topmost"].asBool();
@@ -570,7 +589,8 @@ LRESULT PanelWindow::handleMessage(UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     case WM_GETMINMAXINFO: {
       auto* info = reinterpret_cast<MINMAXINFO*>(lp);
-      info->ptMinTrackSize = {scaled(640), minimumHeight()};
+      const SIZE minOuter = clientToOuter({scaled(640), minimumHeight()});
+      info->ptMinTrackSize = {minOuter.cx, minOuter.cy};
       return 0;
     }
     case WM_DPICHANGED: {

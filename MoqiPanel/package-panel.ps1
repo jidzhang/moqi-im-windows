@@ -94,7 +94,12 @@ if (Test-Path -LiteralPath $OutDir) {
   try {
     Remove-Item -LiteralPath $OutDir -Recurse -Force
   } catch {
-    throw "Cannot replace $OutDir -- close MoqiPanel.exe and MoqiDaemon.exe first. ($($_.Exception.Message))"
+    # An EMPTY folder is fine (Explorer sitting in it also holds the handle
+    # on HGFS): assemble into it. Only a non-empty leftover is a real error.
+    $remaining = @(Get-ChildItem -LiteralPath $OutDir -Recurse -Force)
+    if ($remaining.Count -gt 0) {
+      throw "Cannot replace $OutDir -- close MoqiPanel.exe and MoqiDaemon.exe first. ($($_.Exception.Message))"
+    }
   }
 }
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
