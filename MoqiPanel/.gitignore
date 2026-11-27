@@ -1,0 +1,8 @@
+# build output and the assembled portable folder
+/build-*/
+/dist/
+package-panel.log
+# screenshots and crash traces produced by the test drivers
+/tests/out/
+tests/.check-output.txt
+__pycache__/

@@ -1,0 +1,36 @@
+// MoqiPanel version resource. UTF-8 no BOM + pragma 65001 -- the proven
+// pattern of moqi-daemon/src/MoqiVersion.rc.in. Placeholders filled by
+// configure_file from the outer repo's version.txt: the panel reports the
+// MoqiIME build it was cut from.
+#pragma code_page(65001)
+
+#include <winresrc.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @MOQI_VERSION_MAJOR@,@MOQI_VERSION_MINOR@,@MOQI_VERSION_PATCH@,0
+ PRODUCTVERSION @MOQI_VERSION_MAJOR@,@MOQI_VERSION_MINOR@,@MOQI_VERSION_PATCH@,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "Moqi"
+            VALUE "FileDescription", "墨奇输入板"
+            VALUE "FileVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
+            VALUE "InternalName", "MoqiPanel.exe"
+            VALUE "LegalCopyright", "Copyright (C) 2013-2026 Moqi developers"
+            VALUE "OriginalFilename", "MoqiPanel.exe"
+            VALUE "ProductName", "墨奇输入板"
+            VALUE "ProductVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

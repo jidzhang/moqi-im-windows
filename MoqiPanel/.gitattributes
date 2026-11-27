@@ -1,0 +1,8 @@
+# Windows-native scripts must check out with CRLF (project rule: PS5.1/cmd
+# parse LF-only .bat/.ps1 unreliably). Scoped to this subproject.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+README.txt text eol=crlf
+*.otf binary
+*.png binary
+*.exe binary

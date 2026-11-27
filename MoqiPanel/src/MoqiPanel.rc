@@ -1,0 +1,19 @@
+// MoqiPanel resource script: application icon (moqi logo, shared with the
+// daemon) + manifest. Pure ASCII; the icon path is relative to this file.
+#pragma code_page(65001)
+
+#include <winresrc.h>
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+1 ICON "..\\..\\moqi-daemon\\src\\MoqiDaemon.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Manifest
+//
+
+1 RT_MANIFEST "MoqiPanel.manifest"
