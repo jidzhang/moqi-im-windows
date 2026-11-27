@@ -195,6 +195,11 @@ std::wstring utf8ToWide(const char* text);
 
 std::wstring moqiAppDataDir();      // %APPDATA%\Moqi
 std::wstring localAppDataDirW();    // %LOCALAPPDATA%
+// 目录含 ANSI 代码页外字符（emoji 用户名）时返回 8.3 短路径，否则原样
+// 返回。传给 rime 的 user/staging/log 三条路径必须先过它：LevelDB 的
+// CreateFileA、marisa 的 fopen_s、level_db.cc 的 path::string() 都只认
+// ANSI，不可表示字符会让 rimeInitialize 抛异常（2026-11-27 emoji 实炸）。
+std::wstring toAnsiSafeDir(const std::wstring& dir);
 
 // 共享用户配置目录（%APPDATA%\Moqi\<方案集>，默认 Rime）。用户把 schema、
 // 词库、gram 放这里；引擎初始化时以硬链接投影进各自 user_data_dir，既让所有

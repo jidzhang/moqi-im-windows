@@ -73,6 +73,25 @@ wstring localAppDataDir() {
   return L"";
 }
 
+// 用户目录含 ANSI 代码页外字符（emoji 用户名等）时，rime 依赖链全灭：
+// LevelDB env_windows 的 CreateFileA 按代码页解释字节、marisa 的 fopen_s
+// 同病，而 librime level_db.cc 的 path::string() 做 宽→ANSI 转换时对
+// 不可表示字符直接抛 convert_error（2026-11-27 实测：daemon 启动即崩
+// 0xC0000409；小狼毫 0.17.4 同样起不来）。8.3 短路径全 ASCII，可让整条
+// 依赖链安全。仅检测到不可表示字符才转换（中文用户名零扰动）；卷禁用
+// 8.3 名或超长时回退原路径——行为退化为现状，不更糟。
+wstring toAnsiSafeDir(const wstring& dir) {
+  if (dir.empty()) return dir;
+  BOOL usedDefault = FALSE;
+  ::WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, dir.c_str(), -1,
+                        nullptr, 0, nullptr, &usedDefault);
+  if (!usedDefault) return dir;  // 代码页可完整表示，无需转换
+  wchar_t buf[MAX_PATH] = {};
+  const DWORD n = ::GetShortPathNameW(dir.c_str(), buf, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) return dir;  // 无 8.3 名/超长：回退
+  return wstring(buf, n);
+}
+
 // %APPDATA%\Moqi — shared config root used by the Go backend
 // (moqiAppDataDir(), scheme_set.go).
 wstring moqiAppDataDir() {
@@ -995,9 +1014,14 @@ void RimeRuntime::requestInit(const wstring& programDir,
     }
 
     const string sharedDirUtf8 = wideToUtf8(sharedDir.c_str());
-    const string userDirUtf8 = wideToUtf8(userDir.c_str());
+    // 传给 rime 的三条路径（user/staging/log）走 ANSI 安全形态：目录含
+    // 代码页外字符（emoji 用户名）时换 8.3 短名，引擎内 LevelDB/marisa/
+    // path::string() 全链安全；短名与长名指向同一目录，daemon 在长路径
+    // 侧写的 custom.yaml 引擎照常可见（2026-11-27 emoji 用户名实炸修复）。
+    const wstring rimeUserDir = toAnsiSafeDir(userDir);
+    const string userDirUtf8 = wideToUtf8(rimeUserDir.c_str());
     const string prebuiltUtf8 = wideToUtf8(prebuiltDir.c_str());
-    const string stagingUtf8 = wideToUtf8((userDir + L"\\build").c_str());
+    const string stagingUtf8 = wideToUtf8((rimeUserDir + L"\\build").c_str());
     const string appDataRootUtf8 = wideToUtf8(appDataRoot.c_str());
     wstring logDirW = localAppDataDir();
     if (!logDirW.empty()) {
@@ -1005,6 +1029,7 @@ void RimeRuntime::requestInit(const wstring& programDir,
       filesystem::create_directories(logDirW, ec);
       cleanupOversizedLogDir(logDirW);
     }
+    logDirW = toAnsiSafeDir(logDirW);
     const string logDirUtf8 =
         logDirW.empty() ? string() : wideToUtf8(logDirW.c_str());
 
